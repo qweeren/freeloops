@@ -60,6 +60,7 @@ void PreviewPlayer::render (juce::AudioBuffer<float>& output)
     const auto& audio = current->audio;
     const int srcLength = audio.getNumSamples();
     const int srcChannels = audio.getNumChannels();
+    const int decoded = current->ready.load (std::memory_order_acquire);
     const double step = current->sampleRate / hostRate;
 
     for (int i = 0; i < output.getNumSamples(); ++i)
@@ -70,6 +71,9 @@ void PreviewPlayer::render (juce::AudioBuffer<float>& output)
             finished = true;
             break;
         }
+
+        if (i0 + 1 >= decoded) // caught up with the decoder: wait for it
+            break;
 
         const auto frac = (float) (position - i0);
         for (int ch = 0; ch < output.getNumChannels(); ++ch)

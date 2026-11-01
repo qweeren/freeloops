@@ -66,6 +66,12 @@ namespace
     {
         return id.toString().fromFirstOccurrenceOf ("fs:", false, false);
     }
+
+    // "sf:585539" -> "585539"
+    juce::String sampleFocusId (const juce::var& id)
+    {
+        return id.toString().fromFirstOccurrenceOf ("sf:", false, false);
+    }
 }
 
 //==============================================================================
@@ -80,10 +86,12 @@ FreeloopsEditor::FreeloopsEditor (FreeloopsProcessor& p)
     setResizable (true, true);
     setResizeLimits (640, 420, 2400, 1600);
     setSize (1000, 640);
-    startTimerHz (15);
+    startTimerHz (statusHz);
 
     if (owner.library.getSettings().getBoolValue ("looperman.enabled"))
         setLoopermanEnabled (true);
+    if (owner.library.getSettings().getBoolValue ("samplefocus.enabled"))
+        setSampleFocusEnabled (true);
 
     owner.freesound.onAccountChange = [this] { browser.emitEventIfBrowserIsVisible ("fsState", freesoundState()); };
 }
@@ -91,6 +99,7 @@ FreeloopsEditor::FreeloopsEditor (FreeloopsProcessor& p)
 FreeloopsEditor::~FreeloopsEditor()
 {
     looperman.reset(); // fails any queued downloads while the page can still receive the result
+    samplefocus.reset();
     freesoundSignInWindow.reset();
     owner.freesound.onAccountChange = nullptr;
     owner.library.removeChangeListener (this);
@@ -100,9 +109,11 @@ void FreeloopsEditor::resized()
 {
     browser.setBounds (getLocalBounds());
 
-    // The Looperman session page works in the background; signing in happens in its own popup window.
+    // The Looperman and Sample Focus session pages work in the background; signing in happens in popups.
     if (looperman != nullptr)
         looperman->setBounds (0, 0, 1, 1);
+    if (samplefocus != nullptr)
+        samplefocus->setBounds (0, 0, 1, 1);
 }
 
 //==============================================================================
@@ -126,6 +137,7 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
 
         .withNativeFunction ("getState", [this] (Args, NativeFunctionCompletion done)
         {
+            sentSamplesVersion = owner.library.getSamplesVersion();
             done (owner.library.toVar());
         })
         .withNativeFunction ("addFolder", [this] (Args, NativeFunctionCompletion done)
@@ -181,6 +193,14 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
                 auto file = owner.freesound.findPreview (freesoundId (path));
                 if (! file.existsAsFile())
                     file = owner.freesound.findDownload (freesoundId (path));
+                path = file.getFullPathName();
+            }
+            else if (path.startsWith ("sf:"))
+            {
+                // A Sample Focus sample has peaks once its preview (or the original) is on disk.
+                auto file = owner.samplefocus.findPreview (sampleFocusId (path));
+                if (! file.existsAsFile())
+                    file = owner.samplefocus.findDownload (sampleFocusId (path));
                 path = file.getFullPathName();
             }
             else if (! owner.library.contains (path))
@@ -334,6 +354,64 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
             if (sound != nullptr)
                 juce::SystemClipboard::copyTextToClipboard (sound->attribution());
             done (sound != nullptr);
+        })
+
+        // ---- Sample Focus (opt-in) ----
+        .withNativeFunction ("sfState", [this] (Args, NativeFunctionCompletion done)
+        {
+            done (sampleFocusState());
+        })
+        .withNativeFunction ("sfSetEnabled", [this] (Args args, NativeFunctionCompletion done)
+        {
+            setSampleFocusEnabled ((bool) args[0]);
+            done (sampleFocusState());
+        })
+        .withNativeFunction ("sfSearch", [this] (Args args, NativeFunctionCompletion done)
+        {
+            if (samplefocus == nullptr)
+            {
+                done (errorResult ("Sample Focus is turned off"));
+                return;
+            }
+
+            juce::Component::SafePointer<FreeloopsEditor> safe (this);
+            samplefocus->search (args[0].toString(), (int) args[1], args[2], [safe, done] (juce::var result)
+            {
+                if (safe != nullptr)
+                    done (result);
+            });
+        })
+        .withNativeFunction ("sfPreview", [this] (Args args, NativeFunctionCompletion done)
+        {
+            sampleFocusPreview (args[0].toString(), std::move (done));
+        })
+        .withNativeFunction ("sfDownload", [this] (Args args, NativeFunctionCompletion done)
+        {
+            sampleFocusDownload (args[0].toString(), std::move (done));
+        })
+        .withNativeFunction ("sfSignIn", [this] (Args, NativeFunctionCompletion done)
+        {
+            if (samplefocus != nullptr)
+                samplefocus->showSignIn();
+            done (true);
+        })
+        .withNativeFunction ("sfCheck", [this] (Args, NativeFunctionCompletion done)
+        {
+            if (samplefocus != nullptr)
+                samplefocus->showBrowserCheck();
+            done (true);
+        })
+        .withNativeFunction ("sfSignOut", [this] (Args, NativeFunctionCompletion done)
+        {
+            if (samplefocus != nullptr)
+                samplefocus->signOut();
+            done (true);
+        })
+        .withNativeFunction ("sfOpen", [this] (Args args, NativeFunctionCompletion done)
+        {
+            if (const auto* sample = owner.samplefocus.find (sampleFocusId (args[0])))
+                juce::URL (sample->pageUrl).launchInDefaultBrowser();
+            done (true);
         });
 }
 
@@ -514,6 +592,105 @@ void FreeloopsEditor::freesoundSignIn()
 }
 
 //==============================================================================
+void FreeloopsEditor::setSampleFocusEnabled (bool enabled)
+{
+    auto& settings = owner.library.getSettings();
+    settings.setValue ("samplefocus.enabled", enabled);
+    settings.saveIfNeeded();
+
+    if (enabled && samplefocus == nullptr)
+    {
+        samplefocus = std::make_unique<SampleFocusView> (owner.samplefocus);
+        samplefocus->onStateChange = [this] { browser.emitEventIfBrowserIsVisible ("sfState", sampleFocusState()); };
+        addAndMakeVisible (*samplefocus);
+    }
+    else if (! enabled)
+    {
+        samplefocus.reset();
+    }
+
+    resized();
+}
+
+juce::var FreeloopsEditor::sampleFocusState() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("enabled", samplefocus != nullptr);
+    o->setProperty ("signedIn", samplefocus != nullptr && samplefocus->isSignedIn());
+    o->setProperty ("signingIn", samplefocus != nullptr && samplefocus->isSigningIn());
+    o->setProperty ("challenge", samplefocus != nullptr && samplefocus->needsBrowserCheck());
+    o->setProperty ("checking", samplefocus != nullptr && samplefocus->isCheckingBrowser());
+    o->setProperty ("credits", samplefocus != nullptr ? samplefocus->getCredits() : -1);
+    o->setProperty ("folder", SampleFocusClient::downloadsFolder().getFullPathName());
+    return juce::var (o);
+}
+
+void FreeloopsEditor::sampleFocusPreview (const juce::String& id, NativeFunctionCompletion done)
+{
+    if (samplefocus == nullptr)
+    {
+        done (errorResult ("Sample Focus is turned off"));
+        return;
+    }
+
+    // Sample Focus's CDN only serves previews to its own pages, so the session page fetches the MP3
+    // (into the preview cache) and it plays through the plugin. No credits are spent.
+    const auto request = ++onlinePreviewRequest;
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    samplefocus->fetchPreview (sampleFocusId (id), [safe, id, request, done] (juce::File file, juce::String error)
+    {
+        if (safe == nullptr)
+            return;
+
+        auto* o = new juce::DynamicObject();
+        if (error == "superseded") // the user moved on before this one was fetched
+        {
+            o->setProperty ("superseded", true);
+            done (juce::var (o));
+            return;
+        }
+
+        if (! file.existsAsFile())
+        {
+            done (errorResult (error));
+            return;
+        }
+
+        if (request == safe->onlinePreviewRequest)
+            safe->owner.startPreview (file.getFullPathName(), id);
+
+        o->setProperty ("ok", true);
+        done (juce::var (o));
+    });
+}
+
+void FreeloopsEditor::sampleFocusDownload (const juce::String& id, NativeFunctionCompletion done)
+{
+    if (samplefocus == nullptr)
+    {
+        done (errorResult ("Sample Focus is turned off"));
+        return;
+    }
+
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    samplefocus->download (sampleFocusId (id), [safe, done] (juce::File file, juce::String error)
+    {
+        if (safe == nullptr)
+            return;
+
+        if (! file.existsAsFile())
+        {
+            done (errorResult (error));
+            return;
+        }
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("path", file.getFullPathName());
+        done (juce::var (o));
+    });
+}
+
+//==============================================================================
 void FreeloopsEditor::addFolder (NativeFunctionCompletion done)
 {
     chooser = std::make_unique<juce::FileChooser> ("Add a sample folder", juce::File(), juce::String(), true, false, this);
@@ -529,10 +706,11 @@ void FreeloopsEditor::addFolder (NativeFunctionCompletion done)
 
 void FreeloopsEditor::startDrag (const juce::String& path, NativeFunctionCompletion done)
 {
-    // Only files freeloops knows about: library samples and what it downloaded from Looperman or Freesound.
+    // Only files freeloops knows about: library samples and what it downloaded from the online sources.
     const juce::File file (path);
     const auto known = owner.library.contains (path) || file.isAChildOf (LoopermanClient::downloadsFolder())
-                       || file.isAChildOf (FreesoundClient::downloadsFolder());
+                       || file.isAChildOf (FreesoundClient::downloadsFolder())
+                       || file.isAChildOf (SampleFocusClient::downloadsFolder());
     if (! known || ! file.existsAsFile())
     {
         done (false);
@@ -554,18 +732,36 @@ void FreeloopsEditor::startDrag (const juce::String& path, NativeFunctionComplet
 //==============================================================================
 void FreeloopsEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    browser.emitEventIfBrowserIsVisible ("library", owner.library.toVar());
+    // A big library is a lot to send (and for the page to re-read): leave the samples out if they haven't changed.
+    const auto version = owner.library.getSamplesVersion();
+    if (! browser.isVisible())
+        return;
+
+    browser.emitEventIfBrowserIsVisible ("library", owner.library.toVar (version != sentSamplesVersion));
+    sentSamplesVersion = version;
 }
 
 void FreeloopsEditor::timerCallback()
 {
     owner.preview.releaseRetired();
 
+    const LastStatus now { owner.hostBpm.load(), owner.hostPlaying.load(), owner.preview.getCurrentId(),
+                           owner.preview.isPlaying(), owner.preview.getProgress() };
+
+    // Only when something changed, plus a heartbeat so the page never stays out of step for long.
+    const auto changed = now.bpm != lastStatus.bpm || now.hostPlaying != lastStatus.hostPlaying || now.previewId != lastStatus.previewId
+                         || now.previewPlaying != lastStatus.previewPlaying || now.previewProgress != lastStatus.previewProgress;
+    if (! changed && ++quietTicks < statusHz)
+        return;
+
+    lastStatus = now;
+    quietTicks = 0;
+
     auto* status = new juce::DynamicObject();
-    status->setProperty ("bpm", owner.hostBpm.load());
-    status->setProperty ("hostPlaying", owner.hostPlaying.load());
-    status->setProperty ("previewId", owner.preview.getCurrentId());
-    status->setProperty ("previewPlaying", owner.preview.isPlaying());
-    status->setProperty ("previewProgress", owner.preview.getProgress());
+    status->setProperty ("bpm", now.bpm);
+    status->setProperty ("hostPlaying", now.hostPlaying);
+    status->setProperty ("previewId", now.previewId);
+    status->setProperty ("previewPlaying", now.previewPlaying);
+    status->setProperty ("previewProgress", now.previewProgress);
     browser.emitEventIfBrowserIsVisible ("status", juce::var (status));
 }

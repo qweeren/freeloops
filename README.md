@@ -5,7 +5,8 @@ the way Splice and Loopcloud work, but with no subscription.
 
 freeloops runs **inside FL Studio** as a VST3 plugin (Windows). It indexes your own sample folders, reads BPM
 and key from file names, plays previews through FL's mixer, and lets you drag any sample into the Playlist or
-Channel Rack. It also searches Freesound (with your own free API key) and, if you turn it on, Looperman.
+Channel Rack. It also searches Freesound (with your own free API key) and, if you turn them on, Looperman and
+Sample Focus.
 See the [development plan](docs/PLAN.md).
 
 > Status: early development. Works with local sample folders in FL Studio 2026 on Windows.

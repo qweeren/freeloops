@@ -8,8 +8,8 @@ everything the page can't do itself:
 |---|---|
 | `getState` | Folders, favorites and every indexed sample |
 | `addFolder` / `removeFolder` / `rescan` | Manage the library folders (stored in `%APPDATA%\freeloops\freeloops.settings`) |
-| `preview` / `stopPreview` | Decode a sample and play it **through the plugin's output** |
-| `getPeaks` | Waveform peaks and duration, computed in the background |
+| `preview` / `stopPreview` | Decode a sample and play it **through the plugin's output**: it starts once the first moments are decoded, on its own thread, and the last few auditioned stay decoded (up to 96 MB) |
+| `getPeaks` | Waveform peaks and duration, computed in the background and kept in `%APPDATA%\freeloops\cache\peaks.bin` |
 | `startDrag` | Start an OS file drag, so the sample drops into the Playlist or Channel Rack |
 | `setFavorite`, `reveal` | Favorites; show the file in Explorer |
 
@@ -25,11 +25,18 @@ everything the page can't do itself:
 | `fsSignIn` / `fsSignOut` | Freesound's OAuth2 page in a popup / forget the sign-in |
 | `fsDownload` | Download the original file with the user's account into `Music\freeloops\Freesound` |
 | `fsOpen`, `fsOpenApply`, `fsCopyCredit` | Open the sound's page / the API key form; copy a sound's attribution |
+| `sfState` / `sfSetEnabled` | Sample Focus on/off (off by default), sign-in, credits and browser-check state |
+| `sfSearch` | One page of Sample Focus search results, loaded through the session page |
+| `sfPreview` | Fetch the sample's MP3 preview through the session page (to a cache) and play it through the plugin |
+| `sfSignIn` / `sfSignOut` / `sfCheck` | Sample Focus's login page in a popup / sign out / samplefocus.com in a popup for Cloudflare's check |
+| `sfDownload` | Download a sample with the user's account (one credit) into `Music\freeloops\Sample Focus` |
+| `sfOpen` | Open the sample's page on samplefocus.com |
 
-Events back to the page: `library` (after scans and folder changes), `status` (15×/s: host tempo, preview
-progress), `dragEnded`, `lmState`, `fsState`.
+Events back to the page: `library` (after scans and folder changes; the sample list only when it changed), `status` (up to 20×/s, when something changed: host tempo, preview
+progress), `dragEnded`, `lmState`, `fsState`, `sfState`.
 
-Sources: your own sample folders, Freesound, and Looperman (opt-in). See [docs/PLAN.md](../docs/PLAN.md).
+Sources: your own sample folders, Freesound, and Looperman and Sample Focus (both opt-in). See
+[docs/PLAN.md](../docs/PLAN.md).
 
 ## Freesound
 
@@ -83,6 +90,37 @@ default** and the opt-in screen says so. How it behaves:
 ```bash
 curl -sL "https://www.looperman.com/loops?keys=trap" -o loops.html
 build/LoopermanParseTest_artefacts/Release/LoopermanParseTest.exe loops.html
+```
+
+## Sample Focus
+
+Sample Focus has no public API, its downloads cost the user's own download credits, and its licence forbids
+sharing samples on their own, so this source is **off by default** and the opt-in screen says so. Everything
+goes through [`SampleFocusView`](Source/SampleFocusView.cpp): a WebView2 browser on samplefocus.com with its own
+cookie store, kept 1×1 inside the plugin. The site sits behind Cloudflare, and its CDN only serves previews to
+its own pages, so every request is made from that page, the way the site's own scripts make it.
+
+- **Search** loads Sample Focus's public search pages (`/samples?search=…&min_tempo=…&key=A%23&mode=minor`),
+  which carry their results as JSON for the page's player; [`SampleFocus.cpp`](Source/SampleFocus.cpp) parses
+  that. One request at a time, searches at most one every 1.5 s, cached for the session. Sample Focus needs
+  search words: an empty search shows a prompt instead of a request.
+- **Previews** are the site's MP3 previews, fetched by the page into `%APPDATA%\freeloops\cache\samplefocus-previews`
+  (capped at 300 MB) and played through the plugin. No account and no credits needed.
+- **Downloads** need the user's own account. Signing in opens a popup on Sample Focus's real login page that
+  shares the cookie store; freeloops never sees the password. A download is the site's own request
+  (`POST /samples/<slug>/download` with the page's CSRF token), which spends one credit unless the user already
+  has the sample, then the file it links to. The remaining credits show in the source bar. Files go to
+  `Music\freeloops\Sample Focus` as `Name - 140bpm - Am - Author [sf585539].wav`; dragging a sample that isn't
+  downloaded yet starts the drag as soon as it's saved, if the mouse button is still held.
+- **Browser check:** if Cloudflare answers with its "Just a moment..." check, freeloops stops sending requests
+  and asks the user to open Sample Focus in a popup and answer the check themselves. Nothing is retried until
+  they do.
+- `SampleFocusParseTest` checks the parser and the search URLs against a page you save yourself (Sample Focus's
+  pages aren't stored here):
+
+```bash
+curl -sL "https://samplefocus.com/samples?search=trap" -o samples.html
+build/SampleFocusParseTest_artefacts/Release/SampleFocusParseTest.exe samples.html
 ```
 
 ## Build

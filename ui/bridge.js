@@ -81,6 +81,8 @@
           samples.push({ id: `${extra}\\${name}.wav`, name, folder: short, size: 100000 });
         }
       }
+      // Like the plugin: sorted by name, naturally.
+      samples.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
     }
 
     function state() {
@@ -267,9 +269,74 @@
         console.log("[mock] copy credit", id);
         return true;
       },
+
+      sfState: () => ({
+        ...sf, signingIn: false, checking: false, credits: sf.signedIn ? sf.credits : -1, folder: "C:\\Users\\you\\Music\\freeloops\\Sample Focus",
+      }),
+      sfCheck: () => {
+        setTimeout(() => {
+          sf.challenge = false;
+          emit("sfState", api.sfState());
+        }, 800);
+        return true;
+      },
+      sfSetEnabled: (on) => {
+        sf.enabled = !!on;
+        if (!on) sf.signedIn = false;
+        return api.sfState();
+      },
+      sfSearch: (query, page, filters) => new Promise((resolve) => setTimeout(() => {
+        if (!query) return resolve({ samples: [], page, hasMore: false });
+        const r = rand(page * 53 + query.length + JSON.stringify(filters || {}).length);
+        const range = filters && filters.bpm && filters.bpm[0];
+        const pick = (arr) => arr[Math.floor(r() * arr.length)];
+        const samples = [];
+        for (let i = 0; i < 20; i++) {
+          const n = (page - 1) * 20 + i;
+          const loop = r() < 0.6;
+          samples.push({
+            id: `sf:${580000 + n}`, name: `${query.replace(/\b\w/g, (c) => c.toUpperCase())} ${loop ? `${pick(loopWords)} Loop` : pick(shotWords)}`,
+            author: pick(["MN Beat", "Carter Schaaf", "briann", "Paul Roys Watson II", "T2"]),
+            tags: loop ? ["loop", pick(["dark", "chill", "bouncy"]), pick(["trap", "hip hop", "lo-fi"])] : ["one shot", pick(["punchy", "dry"])],
+            loop, key: (filters && filters.key) || pick(["Am", "F#m", "C", "D", ""]),
+            bpm: loop ? (range ? Math.round(range[0] ?? 100) + 1 : pick([90, 120, 140, 150])) : 0,
+            duration: loop ? 6 + r() * 12 : 0.3 + r() * 2, url: "", path: "",
+          });
+        }
+        resolve({ samples, page, hasMore: page < 3 });
+      }, 600)),
+      sfPreview: (id) => {
+        preview = id;
+        progress = 0;
+        return { ok: true };
+      },
+      sfDownload: (id) => new Promise((resolve) => setTimeout(() => {
+        if (!sf.signedIn) return resolve({ error: "signed-out" });
+        if (sf.credits <= 0) return resolve({ error: "out-of-credits" });
+        sf.credits--;
+        emit("sfState", api.sfState());
+        resolve({ path: `C:\\Users\\you\\Music\\freeloops\\Sample Focus\\${id.slice(3)}.wav` });
+      }, 900)),
+      sfSignIn: () => {
+        setTimeout(() => {
+          sf.signedIn = true;
+          emit("sfState", api.sfState());
+        }, 800);
+        return true;
+      },
+      sfSignOut: () => {
+        sf.signedIn = false;
+        emit("sfState", api.sfState());
+        return true;
+      },
+      sfOpen: (id) => {
+        console.log("[mock] open on Sample Focus", id);
+        return true;
+      },
     };
     const lm = { enabled: false, signedIn: false };
     const fs = { clientId: "", apiKey: "", signedIn: false, username: "" };
+    const sf = { enabled: false, signedIn: false, challenge: false, credits: 3 };
 
     build();
 

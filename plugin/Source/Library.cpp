@@ -8,7 +8,9 @@ namespace
 {
     constexpr auto audioWildcard = "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg";
     constexpr size_t maxSamples = 200000;
-    constexpr int numPeaks = 96;
+    constexpr int unsavedPeaksLimit = 500; // new waveforms read before the disk cache is written again
+    constexpr juce::uint32 peakCacheMagic = 0x6b706c66; // "flpk"
+    constexpr int peakCacheVersion = 1;
 
     juce::PropertiesFile::Options settingsOptions()
     {
@@ -32,12 +34,15 @@ Library::Library() : settings (settingsOptions())
 {
     formats.registerBasicFormats();
     loadSettings();
+    loadPeakCache();
     rescan();
 }
 
 Library::~Library()
 {
     pool.removeAllJobs (true, 4000);
+    if (unsavedPeaks > 0)
+        savePeakCache();
 }
 
 //==============================================================================
@@ -137,6 +142,7 @@ void Library::rescan()
 void Library::setSamples (std::vector<SampleInfo> newSamples)
 {
     samples = std::move (newSamples);
+    ++samplesVersion;
     index.clear();
     for (size_t i = 0; i < samples.size(); ++i)
         index[samples[i].path] = i;
@@ -148,22 +154,27 @@ void Library::setSamples (std::vector<SampleInfo> newSamples)
 //==============================================================================
 void Library::getPeaks (const juce::String& path, std::function<void (juce::var)> callback)
 {
-    if (auto it = peakCache.find (path); it != peakCache.end())
+    const juce::File file (path);
+    const auto size = file.getSize();
+    const auto modified = file.getLastModificationTime().toMilliseconds();
+
+    if (auto it = peakCache.find (path); it != peakCache.end() && it->second.size == size && it->second.modified == modified)
     {
-        callback (it->second);
+        callback (it->second.toVar());
         return;
     }
 
     juce::WeakReference<Library> weak (this);
-    pool.addJob ([this, weak, path, callback = std::move (callback)]
+    pool.addJob ([this, weak, path, size, modified, callback = std::move (callback)]
     {
-        juce::var result;
+        Peaks result;
+        result.size = size;
+        result.modified = modified;
 
         if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (juce::File (path)) })
         {
             const auto length = reader->lengthInSamples;
             const auto channels = juce::jlimit (1, 2, (int) reader->numChannels);
-            juce::Array<juce::var> peaks;
 
             for (int i = 0; i < numPeaks && length > 0; ++i)
             {
@@ -179,13 +190,11 @@ void Library::getPeaks (const juce::String& path, std::function<void (juce::var)
                 for (int c = 0; c < channels; ++c)
                     peak = juce::jmax (peak, std::abs (ranges[c].getStart()), std::abs (ranges[c].getEnd()));
 
-                peaks.add (std::round (juce::jmin (1.0f, peak) * 100.0f) / 100.0f);
+                result.levels[(size_t) i] = (juce::uint8) juce::roundToInt (juce::jmin (1.0f, peak) * 100.0f);
             }
 
-            auto* obj = new juce::DynamicObject();
-            obj->setProperty ("duration", reader->sampleRate > 0 ? (double) length / reader->sampleRate : 0.0);
-            obj->setProperty ("peaks", peaks);
-            result = juce::var (obj);
+            result.duration = reader->sampleRate > 0 ? (float) ((double) length / reader->sampleRate) : 0.0f;
+            result.readable = true;
         }
 
         juce::MessageManager::callAsync ([weak, path, result, callback]
@@ -193,18 +202,128 @@ void Library::getPeaks (const juce::String& path, std::function<void (juce::var)
             if (auto* lib = weak.get())
             {
                 lib->peakCache[path] = result;
-                callback (result);
+                if (result.readable && ++lib->unsavedPeaks >= unsavedPeaksLimit)
+                    lib->savePeakCache();
+                callback (result.toVar());
             }
         });
     });
 }
 
+juce::var Library::Peaks::toVar() const
+{
+    if (! readable)
+        return {};
+
+    juce::Array<juce::var> peaks;
+    peaks.ensureStorageAllocated (numPeaks);
+    for (auto level : levels)
+        peaks.add (level / 100.0);
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("duration", duration);
+    obj->setProperty ("peaks", peaks);
+    return juce::var (obj);
+}
+
+juce::File Library::peakCacheFile() const
+{
+    return settings.getFile().getSiblingFile ("cache").getChildFile ("peaks.bin");
+}
+
+// Read in the background: a big library's cache takes a moment, and waveforms just load as usual until then.
+void Library::loadPeakCache()
+{
+    juce::WeakReference<Library> weak (this);
+    pool.addJob ([weak, file = peakCacheFile()]
+    {
+        auto loaded = std::make_shared<std::map<juce::String, Peaks>>();
+        juce::MemoryBlock data;
+
+        if (file.loadFileAsData (data))
+        {
+            juce::MemoryInputStream in (data, false);
+            if ((juce::uint32) in.readInt() == peakCacheMagic && in.readInt() == peakCacheVersion)
+            {
+                const auto count = in.readInt();
+                for (int i = 0; i < count && ! in.isExhausted(); ++i)
+                {
+                    if (shouldExit())
+                        return;
+
+                    const auto path = in.readString();
+                    Peaks p;
+                    p.size = in.readInt64();
+                    p.modified = in.readInt64();
+                    p.duration = in.readFloat();
+                    if (in.read (p.levels.data(), numPeaks) != numPeaks)
+                        break;
+                    p.readable = true;
+                    loaded->emplace (path, p);
+                }
+            }
+        }
+
+        juce::MessageManager::callAsync ([weak, loaded]
+        {
+            if (auto* lib = weak.get())
+            {
+                for (auto& [path, p] : *loaded)
+                    lib->peakCache.emplace (path, p); // anything read since is newer
+                lib->peakCacheLoaded = true;
+            }
+        });
+    });
+}
+
+void Library::savePeakCache()
+{
+    if (! peakCacheLoaded) // saving now would drop what's on disk
+        return;
+
+    unsavedPeaks = 0;
+
+    juce::MemoryOutputStream out;
+    out.writeInt ((int) peakCacheMagic);
+    out.writeInt (peakCacheVersion);
+
+    int count = 0;
+    for (const auto& [path, p] : peakCache)
+        count += p.readable ? 1 : 0;
+    out.writeInt (count);
+
+    for (const auto& [path, p] : peakCache)
+    {
+        if (! p.readable)
+            continue;
+
+        out.writeString (path);
+        out.writeInt64 (p.size);
+        out.writeInt64 (p.modified);
+        out.writeFloat (p.duration);
+        out.write (p.levels.data(), numPeaks);
+    }
+
+    // Write a temporary file and swap it in, so another plugin instance never reads half a cache.
+    const auto file = peakCacheFile();
+    file.getParentDirectory().createDirectory();
+    juce::TemporaryFile temp (file);
+    if (temp.getFile().replaceWithData (out.getData(), out.getDataSize()))
+        temp.overwriteTargetFileWithTemporary();
+}
+
 //==============================================================================
-juce::var Library::toVar() const
+juce::var Library::toVar (bool withSamples) const
 {
     juce::Array<juce::var> folderList;
     for (const auto& f : folders)
         folderList.add (f);
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("folders", folderList);
+    obj->setProperty ("scanning", scanning);
+    if (! withSamples)
+        return juce::var (obj);
 
     juce::Array<juce::var> sampleList;
     sampleList.ensureStorageAllocated ((int) samples.size());
@@ -221,9 +340,6 @@ juce::var Library::toVar() const
         sampleList.add (juce::var (o));
     }
 
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("folders", folderList);
-    obj->setProperty ("scanning", scanning);
     obj->setProperty ("samples", sampleList);
     return juce::var (obj);
 }

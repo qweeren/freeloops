@@ -52,6 +52,8 @@ target_sources(Freeloops PRIVATE
     Source/Looperman.cpp
     Source/LoopermanView.cpp
     Source/PreviewPlayer.cpp
+    Source/SampleFocus.cpp
+    Source/SampleFocusView.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 
@@ -79,6 +81,14 @@ target_sources(LoopermanParseTest PRIVATE tests/LoopermanParseTest.cpp Source/Lo
 target_compile_features(LoopermanParseTest PRIVATE cxx_std_17)
 target_compile_definitions(LoopermanParseTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_link_libraries(LoopermanParseTest PRIVATE juce::juce_core juce::juce_events
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+# Parser check against a saved Sample Focus search page (see tests/SampleFocusParseTest.cpp).
+juce_add_console_app(SampleFocusParseTest PRODUCT_NAME "SampleFocusParseTest")
+target_sources(SampleFocusParseTest PRIVATE tests/SampleFocusParseTest.cpp Source/SampleFocus.cpp)
+target_compile_features(SampleFocusParseTest PRIVATE cxx_std_17)
+target_compile_definitions(SampleFocusParseTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_link_libraries(SampleFocusParseTest PRIVATE juce::juce_core juce::juce_events
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 # Parser check for Freesound's API replies (tests/freesound-search.json is a hand-written sample reply).

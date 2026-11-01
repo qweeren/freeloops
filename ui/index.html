@@ -39,7 +39,7 @@
       <ul class="sources">
         <li><button class="view source-btn" id="source-looperman" data-source="looperman"><span class="dot" id="lm-dot"></span>Looperman<span class="soon" id="lm-badge">off</span></button></li>
         <li><button class="view source-btn" id="source-freesound" data-source="freesound"><span class="dot" id="fs-dot"></span>Freesound<span class="soon" id="fs-badge">set up</span></button></li>
-        <li class="source"><span class="dot"></span>Sample Focus<span class="soon">soon</span></li>
+        <li><button class="view source-btn" id="source-samplefocus" data-source="samplefocus"><span class="dot" id="sf-dot"></span>Sample Focus<span class="soon" id="sf-badge">off</span></button></li>
       </ul>
     </aside>
 
@@ -48,6 +48,7 @@
         <label class="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
           <input id="search" type="search" placeholder="Search samples, e.g. dark trap 140" autocomplete="off" spellcheck="false">
+          <kbd class="search-kbd" aria-hidden="true">/</kbd>
         </label>
         <div class="tempo" id="tempo" title="FL Studio project tempo"><span class="tempo-dot"></span><span id="tempo-value">-</span> bpm</div>
       </header>
@@ -104,8 +105,19 @@
         </span>
       </div>
 
+      <div class="source-bar" id="sf-bar" hidden>
+        <span class="source-logo">Sample Focus</span>
+        <span id="sf-status"></span>
+        <span class="source-actions">
+          <button class="link-btn" id="sf-check">Open Sample Focus</button>
+          <button class="link-btn" id="sf-signin">Sign in to download</button>
+          <button class="link-btn" id="sf-signout">Sign out</button>
+          <button class="link-btn" id="sf-off">Turn off</button>
+        </span>
+      </div>
+
       <div class="list-head">
-        <span></span><span></span><span>Name</span><span>Key</span><span>BPM</span><span>Time</span><span></span>
+        <span></span><span></span><span>Name</span><span class="c">Key</span><span class="r">BPM</span><span class="r">Time</span><span></span>
       </div>
 
       <div class="list" id="list" tabindex="0">
@@ -115,12 +127,12 @@
 
       <footer class="statusbar">
         <span id="status">Loading...</span>
-        <span class="hint">Drag a row into FL Studio · right-click to show in Explorer · ↑ ↓ to audition</span>
+        <span class="hint">Drag a row into FL Studio <i>·</i> right-click to show in Explorer <i>·</i> <kbd>↑</kbd><kbd>↓</kbd> audition <i>·</i> <kbd>Space</kbd> play/stop</span>
       </footer>
     </main>
   </div>
 
-  <div class="toast" id="toast" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="bridge.js"></script>
   <script src="app.js"></script>

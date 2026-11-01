@@ -251,8 +251,8 @@ Only proceed for a source if its terms allow it or the owner agrees.
 ## 9. Open questions
 
 - [x] What do the Looperman terms say about automated access? They prohibit "downloaders, page scrapers … web scraping" and any "robot, spider … or other data mining technology", except standard browser use (checked 1 Nov 2026). The project owner decided to build the Looperman provider anyway, with safeguards: opt-in with a notice about the terms, the user's own login, user-initiated requests only, throttled, honest User-Agent. Contacting Looperman for permission is still recommended.
-- [ ] What do the Sample Focus terms say about automated access?
-- [ ] Are previews public URLs, or tied to sessions?
+- [ ] What do the Sample Focus terms say about automated access? No terms of service page could be found (checked 1 Nov 2026: `/terms` is a 404; only the [licence](https://samplefocus.com/license) and privacy policy are linked). Its `robots.txt` allows all paths for general user agents (`search=yes, ai-train=no`). The licence forbids sharing or selling a sample by itself. The Sample Focus provider was built on the Looperman safeguards (opt-in, the user's own login and credits, user-initiated requests only, throttled), with every request made from a samplefocus.com page in the plugin, so a Cloudflare check is shown to the user rather than bypassed. Ask Sample Focus for their terms before the public release.
+- [x] Are previews public URLs, or tied to sessions? Looperman's and Sample Focus's CDNs both refuse requests from outside their own pages (HTTP 403). Freesound's previews are public.
 - [x] Project licence: **AGPL-3.0-or-later** (decided 1 Nov 2026). It matches JUCE's free AGPLv3 option and allows Rubber Band/Essentia.
 - [ ] Tauri or Electron, after the Phase 0 drag spike?
 - [ ] Is the plugin shell worth it, or is a small always-on-top standalone window enough for FL Studio users?

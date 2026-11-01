@@ -8,11 +8,16 @@
   const ROW_H = 46;
   const OVERSCAN = 8;
   const DRAG_THRESHOLD = 5;      // px of movement before a press becomes a file drag
-  const PEAK_CONCURRENCY = 3;
+  const PEAK_CONCURRENCY = 4;    // the plugin reads waveforms on up to 4 threads
   const HOST_BPM_TOLERANCE = 3;  // "Match project" accepts +-3 bpm, and half/double time
+
+  const MAX_PREVIEW_SECONDS = 60; // the plugin plays at most this much of a file
 
   const NOTE_INDEX = { C: 0, "C#": 1, Db: 1, D: 2, "D#": 3, Eb: 3, E: 4, F: 5, "F#": 6, Gb: 6, G: 7, "G#": 8, Ab: 8, A: 9, "A#": 10, Bb: 10, B: 11 };
   const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+  // One collator for every comparison: localeCompare with options builds a new one each call, which is slow.
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -25,14 +30,16 @@
     lmStatus: $("lm-status"), lmSignIn: $("lm-signin"), lmSignOut: $("lm-signout"), lmOff: $("lm-off"),
     fsButton: $("source-freesound"), fsDot: $("fs-dot"), fsBadge: $("fs-badge"), fsBar: $("fs-bar"),
     fsStatus: $("fs-status"), fsSignIn: $("fs-signin"), fsSignOut: $("fs-signout"), fsKey: $("fs-key"),
+    sfButton: $("source-samplefocus"), sfDot: $("sf-dot"), sfBadge: $("sf-badge"), sfBar: $("sf-bar"),
+    sfStatus: $("sf-status"), sfSignIn: $("sf-signin"), sfSignOut: $("sf-signout"), sfOff: $("sf-off"), sfCheck: $("sf-check"),
   };
 
   const state = {
     samples: [], byId: new Map(), folders: [], scanning: false,
-    source: "local", // "local" (the user's folders), or an online source: "looperman", "freesound"
+    source: "local", // "local" (the user's folders), or an online source: "looperman", "freesound", "samplefocus"
     view: "all", query: "", bpmMode: "any", key: "", sort: "default", shuffle: new Map(),
-    results: [], selectedId: null,
-    previewId: null, previewProgress: 0, previewPlaying: false,
+    results: [], indexById: new Map(), selectedId: null,
+    previewId: null, previewProgress: 0, previewProgressAt: 0, previewPlaying: false,
     hostBpm: 0, hostPlaying: false,
     lm: {
       enabled: false, signedIn: false, folder: "",
@@ -41,6 +48,10 @@
     fs: {
       configured: false, canSignIn: false, builtIn: false, clientId: "", signedIn: false, signingIn: false,
       username: "", folder: "", editing: false,
+      results: [], byId: new Map(), page: 0, hasMore: false, loading: false, error: null, searched: null, sig: null,
+    },
+    sf: {
+      enabled: false, signedIn: false, signingIn: false, challenge: false, checking: false, credits: -1, folder: "",
       results: [], byId: new Map(), page: 0, hasMore: false, loading: false, error: null, searched: null, sig: null,
     },
   };
@@ -62,8 +73,15 @@
       search: (query, page) => window.fl.call("fsSearch", query, page, onlineFilters()),
       signature: (query) => `${query} ${JSON.stringify(onlineFilters())}`,
     },
+    samplefocus: {
+      label: "Sample Focus", prefix: "sf", unit: "sample", list: "samples",
+      st: () => state.sf,
+      ready: () => state.sf.enabled,
+      search: (query, page) => window.fl.call("sfSearch", query, page, onlineFilters()),
+      signature: (query) => `${query} ${JSON.stringify(onlineFilters())}`,
+    },
   };
-  const SOURCE_BY_PREFIX = { lm: "looperman", fs: "freesound" };
+  const SOURCE_BY_PREFIX = { lm: "looperman", fs: "freesound", sf: "samplefocus" };
 
   function online() {
     return SOURCES[state.source] || null;
@@ -137,7 +155,7 @@
   }
 
   function enrichOnline(raw, src) {
-    const details = src === "fs" ? [raw.license] : [raw.genre, raw.category];
+    const details = src === "fs" ? [raw.license] : src === "sf" ? (raw.tags || []).slice(0, 3) : [raw.genre, raw.category];
     const bpm = raw.bpm || (src === "fs" ? parseBpm(raw.name, /loop/i.test(raw.name)) : null);
     return {
       id: raw.id,
@@ -150,7 +168,7 @@
       fav: false,
       bpm: bpm || null,
       key: normalizeKey(raw.key),
-      isLoop: src === "lm" || !!bpm,
+      isLoop: src === "lm" || !!raw.loop || !!bpm,
       hay: "",
       peaks: null,
       duration: typeof raw.duration === "number" && raw.duration > 0 ? raw.duration : null,
@@ -161,22 +179,26 @@
 
   function loadLibrary(lib) {
     if (!lib) return;
-    const old = state.byId;
     state.folders = lib.folders || [];
     state.scanning = !!lib.scanning;
-    state.samples = (lib.samples || []).map((raw) => {
-      const s = enrich(raw);
-      const prev = old.get(s.id);
-      if (prev) {
-        s.peaks = prev.peaks;
-        s.duration = prev.duration;
-      }
+    renderFolders();
+    if (!lib.samples) { // the plugin leaves the samples out when they haven't changed
+      renderEmpty();
+      renderStatus();
+      return;
+    }
+    // A sample that was here before keeps its parsed name, waveform and duration.
+    const old = state.byId;
+    state.samples = lib.samples.map((raw, i) => {
+      const prev = old.get(raw.id);
+      const s = prev && prev.name === raw.name && prev.folder === raw.folder ? prev : enrich(raw);
+      s.fav = !!raw.fav;
+      s.order = i; // the plugin sorts by name (naturally), so this is the name order too
       return s;
     });
     state.byId = new Map(state.samples.map((s) => [s.id, s]));
-    renderFolders();
     renderCounts();
-    applyFilters();
+    applyFilters({ keepScroll: old.size > 0 });
   }
 
   // ---------------------------------------------------------------- filtering
@@ -208,16 +230,31 @@
     }
   }
 
+  // Local samples arrive sorted by name, so their order doubles as the name order.
+  function byName(a, b) {
+    return a.src || b.src ? collator.compare(a.name, b.name) : a.order - b.order;
+  }
+
+  let folderRank = new Map();
   function compare(a, b) {
-    const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
     switch (state.sort) {
-      case "bpm": return (a.bpm ?? 999) - (b.bpm ?? 999) || byName;
-      case "key": return (a.key ? a.key.pc * 2 + a.key.minor : 99) - (b.key ? b.key.pc * 2 + b.key.minor : 99) || byName;
-      case "folder": return a.folder.localeCompare(b.folder, undefined, { numeric: true }) || byName;
+      case "bpm": return (a.bpm ?? 999) - (b.bpm ?? 999) || byName(a, b);
+      case "key": return (a.key ? a.key.pc * 2 + a.key.minor : 99) - (b.key ? b.key.pc * 2 + b.key.minor : 99) || byName(a, b);
+      case "folder": return folderRank.get(a.folder) - folderRank.get(b.folder) || byName(a, b);
       case "random": return shuffleRank(a) - shuffleRank(b);
-      case "name": return byName;
-      default: return a.src && b.src ? a.order - b.order : byName; // the source's own order
+      case "name": return byName(a, b);
+      default: return a.src && b.src ? a.order - b.order : byName(a, b); // the source's own order
     }
+  }
+
+  function sortResults() {
+    const local = !online();
+    if (local && (state.sort === "default" || state.sort === "name")) return; // filtering kept the name order
+    if (state.sort === "folder") {
+      const folders = [...new Set(state.results.map((s) => s.folder))].sort(collator.compare);
+      folderRank = new Map(folders.map((f, i) => [f, i]));
+    }
+    state.results.sort(compare);
   }
 
   function shuffleRank(s) {
@@ -239,7 +276,8 @@
       state.results = state.samples.filter((s) =>
         viewMatches(s) && bpmMatches(s) && keyMatches(s) && tokens.every((t) => s.hay.includes(t)));
     }
-    state.results.sort(compare);
+    sortResults();
+    state.indexById = new Map(state.results.map((s, i) => [s.id, i]));
     if (!keepScroll) els.list.scrollTop = 0;
     els.resultCount.textContent = `${state.results.length.toLocaleString()} result${state.results.length === 1 ? "" : "s"}`;
     renderList();
@@ -250,8 +288,12 @@
   // ---------------------------------------------------------------- rendering
 
   const icons = {
-    play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
-    stop: '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
+    play: '<svg class="solid" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
+    stop: '<svg class="solid" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>',
+    star: '<svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
+    starOn: '<svg class="solid" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
+    download: '<svg viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   };
 
   function esc(text) {
@@ -274,75 +316,185 @@
     return [first, last];
   }
 
+  // Rows are recycled: scrolling only fills the rows that come into view, and state changes (selection,
+  // playback, downloads) touch just what changed. Each row keeps its sample and what it last drew.
+  const rowEls = new Map(); // result index -> row element
+  const spareRows = [];
+  const loadMore = document.createElement("div");
+  loadMore.className = "load-more";
+
+  function makeRow() {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<button class="play" tabindex="-1" title="Preview"></button>`
+      + `<canvas class="wave"></canvas>`
+      + `<div class="title"><div class="name"></div><div class="folder-path"></div></div>`
+      + `<span class="badge key"></span><span class="num bpm"></span><span class="num time"></span><span class="action"></span>`;
+    const [play, wave, title, key, bpm, time, action] = row.children;
+    Object.assign(row, { _play: play, _wave: wave, _name: title.firstChild, _folder: title.lastChild, _key: key, _bpm: bpm, _time: time, _action: action });
+    sizeCanvas(wave);
+    return row;
+  }
+
+  function setText(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  function setHtml(el, html) {
+    if (el._html === html) return;
+    el._html = html;
+    el.innerHTML = html;
+  }
+
+  function updateRow(row, s, i) {
+    if (row._i !== i) {
+      row._i = i;
+      row.dataset.i = i;
+      row.style.transform = `translateY(${i * ROW_H}px)`;
+    }
+    if (row._s !== s) {
+      row._s = s;
+      row._waveKey = null;
+      setText(row._name, s.name);
+      row._name.title = s.name;
+      setText(row._folder, s.folder);
+      setText(row._key, s.key ? s.key.label : "-");
+      row._key.className = `badge key${s.key ? (s.key.minor ? " minor" : "") : " empty-cell"}`;
+      setText(row._bpm, s.bpm ? String(s.bpm) : "-");
+      row._bpm.classList.toggle("empty-cell", !s.bpm);
+    }
+    const playing = s.id === state.previewId && state.previewPlaying;
+    row.classList.toggle("selected", s.id === state.selectedId);
+    row.classList.toggle("playing", playing);
+    setHtml(row._play, playing ? icons.stop : icons.play);
+    setHtml(row._action, s.src ? downloadButton(s) : favoriteButton(s));
+    setText(row._time, formatTime(s.duration));
+    drawWave(row, s);
+    if (!s.peaks) requestPeaks(s);
+  }
+
   function renderList() {
     els.rows.style.height = `${state.results.length * ROW_H}px`;
     const [first, last] = visibleRange();
-    let html = "";
-    for (let i = first; i < last; i++) {
-      const s = state.results[i];
-      const playing = s.id === state.previewId && state.previewPlaying;
-      const cls = ["row", s.id === state.selectedId ? "selected" : "", playing ? "playing" : ""].join(" ");
-      html += `<div class="${cls}" data-i="${i}" style="top:${i * ROW_H}px">`
-        + `<button class="play" tabindex="-1" title="Preview">${playing ? icons.stop : icons.play}</button>`
-        + `<canvas class="wave" width="300" height="56"></canvas>`
-        + `<div class="title"><div class="name" title="${esc(s.name)}">${esc(s.name)}</div><div class="folder-path">${esc(s.folder)}</div></div>`
-        + `<span class="badge key ${s.key ? "" : "empty-cell"}">${s.key ? s.key.label : "-"}</span>`
-        + `<span class="num ${s.bpm ? "" : "empty-cell"}">${s.bpm ?? "-"}</span>`
-        + `<span class="num">${formatTime(s.duration)}</span>`
-        + (s.src ? downloadButton(s) : `<button class="fav ${s.fav ? "on" : ""}" tabindex="-1" title="Favorite (F)">${s.fav ? "★" : "☆"}</button>`)
-        + `</div>`;
+
+    for (const [i, row] of rowEls) {
+      if (i >= first && i < last) continue;
+      rowEls.delete(i);
+      spareRows.push(row);
     }
+    for (let i = first; i < last; i++) {
+      let row = rowEls.get(i);
+      if (!row) {
+        row = spareRows.pop() || makeRow();
+        rowEls.set(i, row);
+        if (!row.isConnected) els.rows.appendChild(row);
+      }
+      updateRow(row, state.results[i], i);
+    }
+    for (const row of spareRows) {
+      if (!row.isConnected) continue;
+      row.remove();
+      row._s = null;
+    }
+
     const src = online();
     if (src && (src.st().hasMore || src.st().loading) && last === state.results.length) {
-      html += `<div class="load-more" style="top:${state.results.length * ROW_H}px">${src.st().loading ? `Loading more from ${src.label}...` : "Scroll for more"}</div>`;
+      loadMore.style.transform = `translateY(${state.results.length * ROW_H}px)`;
+      setText(loadMore, src.st().loading ? `Loading more from ${src.label}...` : "Scroll for more");
+      if (!loadMore.isConnected) els.rows.appendChild(loadMore);
+    } else if (loadMore.isConnected) {
+      loadMore.remove();
     }
-    els.rows.innerHTML = html;
-    for (const row of els.rows.querySelectorAll(".row")) {
-      const s = state.results[+row.dataset.i];
-      drawWave(row.querySelector("canvas"), s);
-      if (!s.peaks) requestPeaks(s);
-    }
+  }
+
+  function favoriteButton(s) {
+    return `<button class="fav ${s.fav ? "on" : ""}" tabindex="-1" title="Favorite (F)">${s.fav ? icons.starOn : icons.star}</button>`;
   }
 
   function downloadButton(s) {
-    if (s.path) return `<button class="dl done" tabindex="-1" title="Downloaded. Drag it into FL Studio">✓</button>`;
-    if (s.downloading) return `<button class="dl busy" tabindex="-1" title="Downloading...">⤓</button>`;
-    const how = s.src === "fs" ? "the original file with your Freesound account" : "with your Looperman account";
-    return `<button class="dl" tabindex="-1" title="Download ${how}">⤓</button>`;
+    if (s.path) return `<button class="dl done" tabindex="-1" title="Downloaded. Drag it into FL Studio">${icons.check}</button>`;
+    if (s.downloading) return `<button class="dl busy" tabindex="-1" title="Downloading...">${icons.download}</button>`;
+    const how = s.src === "fs" ? "the original file with your Freesound account"
+      : s.src === "sf" ? "with your Sample Focus account (1 credit, unless you've downloaded it before)" : "with your Looperman account";
+    return `<button class="dl" tabindex="-1" title="Download ${how}">${icons.download}</button>`;
   }
 
   function rowFor(s) {
-    const i = state.results.indexOf(s);
-    return i < 0 ? null : els.rows.querySelector(`.row[data-i="${i}"]`);
+    const i = state.indexById.get(s.id);
+    const row = i === undefined ? null : rowEls.get(i);
+    return row && row._s === s ? row : null;
   }
 
   function refreshRow(s) {
     const row = rowFor(s);
-    if (!row) return;
-    drawWave(row.querySelector("canvas"), s);
-    row.querySelector(".num:last-of-type").textContent = formatTime(s.duration);
+    if (row) updateRow(row, s, row._i);
   }
 
-  function drawWave(canvas, s) {
+  // ---------------------------------------------------------------- waveforms: drawing
+
+  const WAVE_W = 150;
+  const WAVE_H = 28;
+  const waveColors = {
+    idle: "#4b525b", selected: "#8b939d", played: "#ff8c1a", unplayed: "rgba(255, 140, 26, 0.3)", empty: "#2a2e34",
+  };
+
+  function sizeCanvas(canvas) {
+    const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+    canvas.width = WAVE_W * dpr;
+    canvas.height = WAVE_H * dpr;
+    canvas._dpr = dpr;
+  }
+
+  // Redraws only when what it shows changed: the peaks, the selection, or (while playing) the playhead.
+  function drawWave(row, s, progress = state.previewProgress) {
+    const playing = s.id === state.previewId && state.previewPlaying;
+    const selected = s.id === state.selectedId;
+    const key = `${s.peaks ? s.peaks.length : -1}|${selected}|${playing ? Math.round(progress * WAVE_W * 2) : -1}`;
+    if (row._waveKey === key) return;
+    row._waveKey = key;
+
+    const canvas = row._wave;
     const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(canvas._dpr, 0, 0, canvas._dpr, 0, 0);
+    ctx.clearRect(0, 0, WAVE_W, WAVE_H);
     const peaks = s.peaks;
     if (!peaks || peaks.length === 0) {
-      ctx.fillStyle = "#2c3137";
-      ctx.fillRect(0, h / 2 - 1, w, 2);
+      ctx.fillStyle = waveColors.empty;
+      ctx.fillRect(0, WAVE_H / 2 - 0.5, WAVE_W, 1);
       return;
     }
-    const playing = s.id === state.previewId && state.previewPlaying;
-    const progress = playing ? state.previewProgress : 0;
-    const bar = w / peaks.length;
+    const step = WAVE_W / peaks.length;
+    const barW = Math.max(1 / canvas._dpr, step * 0.62);
+    const playX = playing ? progress * WAVE_W : -1;
     for (let i = 0; i < peaks.length; i++) {
-      const v = Math.max(0.04, peaks[i]);
-      const bh = v * (h - 4);
-      ctx.fillStyle = playing && i / peaks.length <= progress ? "#ff8c1a" : (playing ? "#8a6a4c" : "#6b737d");
-      ctx.fillRect(i * bar, (h - bh) / 2, Math.max(1, bar - 1), bh);
+      const x = i * step;
+      const bh = Math.max(1.5, peaks[i] * (WAVE_H - 2));
+      ctx.fillStyle = playing ? (x < playX ? waveColors.played : waveColors.unplayed) : (selected ? waveColors.selected : waveColors.idle);
+      ctx.fillRect(x, (WAVE_H - bh) / 2, barW, bh);
     }
+  }
+
+  // The plugin reports progress 20 times a second; in between, the playhead moves on its own so it glides.
+  let playheadFrame = 0;
+  function animatePlayhead() {
+    if (playheadFrame) return;
+    const tick = () => {
+      playheadFrame = 0;
+      if (!state.previewPlaying) return;
+      const s = findSample(state.previewId);
+      const row = s && rowFor(s);
+      if (row) {
+        let progress = state.previewProgress;
+        const length = s.duration ? Math.min(s.duration, MAX_PREVIEW_SECONDS) : 0;
+        if (length > 0) { // run ahead of the last report by at most a few reports' worth
+          const ahead = Math.max(0, performance.now() - state.previewProgressAt) / 1000 / length;
+          progress = Math.min(1, progress + Math.min(ahead, 0.15 / length));
+        }
+        drawWave(row, s, progress);
+      }
+      playheadFrame = requestAnimationFrame(tick);
+    };
+    playheadFrame = requestAnimationFrame(tick);
   }
 
   function renderFolders() {
@@ -390,6 +542,26 @@
         html = `<h2>Searching Freesound...</h2>`;
       } else if (state.results.length === 0 && fs.searched !== null) {
         html = `<h2>No sounds found</h2><p>Try other words, or clear the BPM and key filters. Freesound only knows the tempo and key of sounds it has analysed.</p>`;
+      }
+    } else if (state.source === "samplefocus") {
+      const sf = state.sf;
+      if (!sf.enabled) {
+        html = `<h2>Sample Focus</h2>`
+          + `<p>Search and preview Sample Focus's free community samples right here, then drag them into FL Studio. Downloads use your own Sample Focus account and its download credits.</p>`
+          + `<p class="fine">freeloops loads Sample Focus's public search pages for your searches, one request at a time, and plays previews through samplefocus.com the way its own player does (no credits). A sample is downloaded only when you drag or download it, through your own signed-in session, and each new download costs one of your Sample Focus credits. Samples stay under the Sample Focus licence: use them in your own music, but don't share or sell them on their own.</p>`
+          + `<button class="cta" data-action="sf-enable">Turn on Sample Focus</button>`;
+      } else if (sf.challenge || (sf.error === "challenge" && state.results.length === 0)) {
+        html = `<h2>Sample Focus wants a browser check</h2>`
+          + `<p>Sample Focus's security service (Cloudflare) wants to check that a person is using this browser. Open Sample Focus and answer the check yourself; freeloops picks up where it left off once it's done.</p>`
+          + `<button class="cta" data-action="sf-check">${sf.checking ? "Waiting for the check..." : "Open Sample Focus"}</button>`;
+      } else if (sf.error && state.results.length === 0) {
+        html = `<h2>Sample Focus isn't responding</h2><p>${esc(sf.error)}</p>`;
+      } else if (sf.loading && state.results.length === 0) {
+        html = `<h2>Searching Sample Focus...</h2>`;
+      } else if (state.results.length === 0 && sf.searched === "") {
+        html = `<h2>Search Sample Focus</h2><p>Type what you're looking for, e.g. "trap piano".</p>`;
+      } else if (state.results.length === 0 && sf.searched !== null) {
+        html = `<h2>No samples found</h2><p>Try other words, or clear the BPM and key filters.</p>`;
       }
     } else if (state.folders.length === 0) {
       html = `<h2>Add your sample folders</h2><p>freeloops indexes the folders you choose. Nothing is uploaded or copied. Then search, preview and drag samples straight into FL Studio.</p><button class="cta" data-action="add-folder">Add a folder</button>`;
@@ -451,6 +623,31 @@
     els.fsSignOut.hidden = !fs.signedIn;
     els.fsKey.hidden = fs.builtIn;
     els.fsButton.classList.toggle("active", state.source === "freesound");
+    renderSampleFocus();
+  }
+
+  function renderSampleFocus() {
+    const sf = state.sf;
+    const credits = sf.credits >= 0 ? ` · ${sf.credits} download credit${sf.credits === 1 ? "" : "s"} left` : "";
+    els.sfBadge.textContent = !sf.enabled ? "off" : sf.signedIn ? "on" : "sign in";
+    els.sfDot.className = `dot ${sf.enabled ? (sf.signedIn ? "on" : "ready") : ""}`;
+    els.sfBar.hidden = state.source !== "samplefocus" || !sf.enabled;
+    els.sfStatus.textContent = sf.checking
+      ? "Answer the check in the Sample Focus window..."
+      : sf.challenge
+        ? "Sample Focus wants a browser check before it answers."
+        : sf.signedIn
+          ? `Signed in${credits}. Downloads are saved to ${sf.folder}`
+          : sf.signingIn
+            ? "Finish signing in in the Sample Focus window..."
+            : "Previews work without an account. Sign in to drag samples into FL Studio.";
+    els.sfCheck.hidden = !sf.challenge;
+    els.sfCheck.classList.toggle("primary", sf.challenge);
+    els.sfSignIn.hidden = sf.signedIn || sf.challenge;
+    els.sfSignIn.textContent = sf.signingIn ? "Signing in..." : "Sign in to download";
+    els.sfSignIn.classList.toggle("primary", !sf.signedIn);
+    els.sfSignOut.hidden = !sf.signedIn;
+    els.sfButton.classList.toggle("active", state.source === "samplefocus");
   }
 
   function renderStatus() {
@@ -460,7 +657,7 @@
       const n = st.results.length;
       els.status.textContent = src.ready()
         ? `${src.label} · ${n} ${src.unit}${n === 1 ? "" : "s"} loaded${st.searched ? ` for "${st.searched}"` : ""}`
-        : state.source === "looperman" ? "Looperman is off" : "Freesound needs an API key";
+        : state.source === "freesound" ? "Freesound needs an API key" : `${src.label} is off`;
       return;
     }
     const n = state.samples.length.toLocaleString();
@@ -478,9 +675,9 @@
   let toastTimer = 0;
   function toast(message) {
     els.toast.textContent = message;
-    els.toast.hidden = false;
+    els.toast.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (els.toast.hidden = true), 2600);
+    toastTimer = setTimeout(() => els.toast.classList.remove("show"), 2600);
   }
 
   // ---------------------------------------------------------------- waveforms
@@ -496,7 +693,8 @@
   }
 
   function isOnScreen(s) {
-    const i = state.results.indexOf(s);
+    const i = state.indexById.get(s.id);
+    if (i === undefined) return false;
     const [first, last] = visibleRange();
     return i >= first && i < last;
   }
@@ -526,7 +724,7 @@
     if (!s) return;
     state.selectedId = s.id;
     if (scroll) {
-      const i = state.results.indexOf(s);
+      const i = state.indexById.get(s.id) ?? 0;
       const top = i * ROW_H;
       if (top < els.list.scrollTop) els.list.scrollTop = top;
       else if (top + ROW_H > els.list.scrollTop + els.list.clientHeight) els.list.scrollTop = top + ROW_H - els.list.clientHeight;
@@ -536,13 +734,14 @@
   }
 
   function findSample(id) {
-    return state.byId.get(id) || state.lm.byId.get(id) || state.fs.byId.get(id);
+    return state.byId.get(id) || state.lm.byId.get(id) || state.fs.byId.get(id) || state.sf.byId.get(id);
   }
 
   function preview(s) {
     state.previewId = s.id;
     state.previewPlaying = true;
     state.previewProgress = 0;
+    state.previewProgressAt = Infinity; // hold the playhead at the start until the plugin reports
     state.previewRequestedAt = performance.now();
     // An online sound is fetched before it plays (a Looperman loop is downloaded), which takes a moment.
     state.previewGraceMs = s.src && !s.path ? 20000 : 500;
@@ -551,6 +750,8 @@
         if (!r || r.error) {
           const error = r && r.error;
           if (s.src === "fs") toast(error ? `Couldn't load the preview from Freesound: ${error}` : "Couldn't load the preview from Freesound.");
+          else if (s.src === "sf") toast(error === "challenge" ? SF_ERRORS.challenge
+            : error ? `Couldn't load the preview from Sample Focus: ${error}` : "Couldn't load the preview from Sample Focus.");
           else toast(error === "signed-out"
             ? "Sign in to Looperman to preview loops. Looperman only plays its previews on its own site."
             : LM_ERRORS[error] || "Couldn't load the preview from Looperman.");
@@ -641,6 +842,30 @@
     else applyFilters({ keepScroll: true });
   }
 
+  const SF_ERRORS = {
+    "signed-out": "Sign in to Sample Focus to download samples.",
+    "out-of-credits": "You're out of Sample Focus download credits. Upload samples on samplefocus.com to earn more.",
+    "not-a-file": "Sample Focus sent a web page instead of the file. Right-click the sample to open it on Sample Focus.",
+    "zip-not-supported": "This sample downloads as a zip, which freeloops can't unpack yet.",
+    "timed out": "The download from Sample Focus timed out.",
+    challenge: "Sample Focus wants a browser check first. Click \"Open Sample Focus\" and answer it.",
+  };
+
+  function applySampleFocusState(st) {
+    if (!st) return;
+    const sf = state.sf;
+    const wasEnabled = sf.enabled;
+    const wasChallenged = sf.challenge;
+    for (const k of ["enabled", "signedIn", "signingIn", "challenge", "checking"]) sf[k] = !!st[k];
+    sf.credits = typeof st.credits === "number" ? st.credits : -1;
+    sf.folder = st.folder || "";
+    if (sf.challenge) sf.sig = null; // search again once the check is answered
+    renderLooperman();
+    if (state.source !== "samplefocus") return;
+    if (sf.enabled && (!wasEnabled || (wasChallenged && !sf.challenge))) searchOnline("samplefocus", state.query, 1);
+    else applyFilters({ keepScroll: true });
+  }
+
   function searchOnline(name, query, page) {
     const src = SOURCES[name];
     const st = src.st();
@@ -657,7 +882,7 @@
       if (state.source === name) applyFilters();
     }
     src.search(query, page).then((r) => {
-      if (token !== st.token) return; // a newer search replaced this one
+      if (token !== st.token || (r && r.superseded)) return; // a newer search replaced this one
       st.loading = false;
       if (r && r.error === "no-key") {
         state.fs.configured = false;
@@ -700,7 +925,7 @@
   function downloadOnline(s, onReady) {
     if (s.path || s.downloading) return;
     const src = sourceOf(s);
-    const errors = s.src === "fs" ? FS_ERRORS : LM_ERRORS;
+    const errors = { fs: FS_ERRORS, sf: SF_ERRORS }[s.src] || LM_ERRORS;
     if (!src.st().signedIn) {
       toast(errors["signed-out"]);
       return;
@@ -713,7 +938,8 @@
       if (r && r.path) {
         s.path = r.path;
         if (!(onReady && onReady())) {
-          toast(s.license.startsWith("CC BY") ? `Ready. ${s.license}: credit ${s.author} when you release it.` : "Ready. Drag it into FL Studio.");
+          const credits = s.src === "sf" && state.sf.credits >= 0 ? ` ${state.sf.credits} Sample Focus credit${state.sf.credits === 1 ? "" : "s"} left.` : "";
+          toast(s.license.startsWith("CC BY") ? `Ready. ${s.license}: credit ${s.author} when you release it.` : `Ready. Drag it into FL Studio.${credits}`);
         }
       } else {
         const error = r && r.error;
@@ -790,7 +1016,7 @@
 
   function endDrag() {
     document.body.classList.remove("dragging");
-    for (const row of els.rows.querySelectorAll(".row.dragging")) row.classList.remove("dragging");
+    for (const row of rowEls.values()) row.classList.remove("dragging");
   }
 
   els.list.addEventListener("contextmenu", (e) => {
@@ -811,7 +1037,13 @@
     });
   });
 
-  window.addEventListener("resize", () => renderList());
+  window.addEventListener("resize", () => {
+    for (const row of [...rowEls.values(), ...spareRows]) { // the display's scale may have changed
+      sizeCanvas(row._wave);
+      row._waveKey = null;
+    }
+    renderList();
+  });
 
   // ---------------------------------------------------------------- input: keyboard
 
@@ -908,7 +1140,7 @@
     applyFilters();
   });
 
-  for (const btn of [els.lmButton, els.fsButton]) {
+  for (const btn of [els.lmButton, els.fsButton, els.sfButton]) {
     btn.addEventListener("click", () => {
       for (const v of els.views.querySelectorAll(".view")) v.classList.remove("active");
       state.source = btn.dataset.source;
@@ -924,6 +1156,10 @@
   els.fsSignIn.addEventListener("click", () => window.fl.call("fsSignIn").then(applyFreesoundState));
   els.fsSignOut.addEventListener("click", () => window.fl.call("fsSignOut").then(applyFreesoundState));
   els.fsKey.addEventListener("click", () => editFreesoundKey(true));
+  els.sfSignIn.addEventListener("click", () => window.fl.call("sfSignIn"));
+  els.sfSignOut.addEventListener("click", () => window.fl.call("sfSignOut"));
+  els.sfOff.addEventListener("click", () => window.fl.call("sfSetEnabled", false).then(applySampleFocusState));
+  els.sfCheck.addEventListener("click", () => window.fl.call("sfCheck"));
 
   function editFreesoundKey(on) {
     state.fs.editing = on;
@@ -936,6 +1172,8 @@
   els.empty.addEventListener("click", (e) => {
     if (e.target.closest("[data-action=add-folder]")) addFolder();
     if (e.target.closest("[data-action=lm-enable]")) window.fl.call("lmSetEnabled", true).then(applyLoopermanState);
+    if (e.target.closest("[data-action=sf-enable]")) window.fl.call("sfSetEnabled", true).then(applySampleFocusState);
+    if (e.target.closest("[data-action=sf-check]")) window.fl.call("sfCheck");
     if (e.target.closest("[data-action=fs-apply]")) window.fl.call("fsOpenApply");
     if (e.target.closest("[data-action=fs-edit]")) editFreesoundKey(true);
     if (e.target.closest("[data-action=fs-cancel]")) editFreesoundKey(false);
@@ -992,20 +1230,19 @@
     if (st.previewId) state.previewId = st.previewId;
     state.previewPlaying = !!st.previewPlaying;
     state.previewProgress = st.previewProgress || 0;
+    state.previewProgressAt = performance.now();
     if (wasPlaying !== state.previewPlaying || prevId !== state.previewId) renderList();
-    else if (state.previewPlaying) {
-      const s = findSample(state.previewId);
-      const row = s && rowFor(s);
-      if (row) drawWave(row.querySelector("canvas"), s);
-    }
+    if (state.previewPlaying) animatePlayhead();
   });
 
   window.fl.on("lmState", applyLoopermanState);
   window.fl.on("fsState", applyFreesoundState);
+  window.fl.on("sfState", applySampleFocusState);
 
   window.fl.call("getState").then(loadLibrary);
   window.fl.call("lmState").then(applyLoopermanState);
   window.fl.call("fsState").then(applyFreesoundState);
+  window.fl.call("sfState").then(applySampleFocusState);
   renderTempo();
   renderLooperman();
 })();

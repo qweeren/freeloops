@@ -18,6 +18,11 @@ public:
     {
         juce::AudioBuffer<float> audio;
         double sampleRate = 44100.0;
+
+        // Samples decoded so far. A clip starts playing while the rest is still being decoded into audio
+        // (past this point, on another thread); the audio thread only reads below it.
+        std::atomic<int> ready { 0 };
+        bool isComplete() const { return ready.load() >= audio.getNumSamples(); }
     };
 
     // Message thread.
