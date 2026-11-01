@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "TestLoop.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>

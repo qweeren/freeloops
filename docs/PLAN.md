@@ -135,7 +135,7 @@ Native drag APIs need a **real file path at the moment the drag starts**, so the
 ### 3.3 Tempo/key matching
 
 - **v1:** parse BPM and key from titles/tags when present (e.g. Looperman URLs include BPM). Show a badge and let FL's built-in stretching handle the rest.
-- **v2:** local analysis and time-stretch before drag-out so the dropped file already matches the project tempo. Library licences matter here: Rubber Band and Essentia are GPL/AGPL (copyleft, fine for an open-source GPL app, not for permissive licensing); Signalsmith Stretch is MIT and librosa is ISC. Decide the project licence first (§9).
+- **v2:** local analysis and time-stretch before drag-out so the dropped file already matches the project tempo. Library licences matter here: Rubber Band and Essentia are GPL/AGPL (copyleft, fine for an open-source GPL app, not for permissive licensing); Signalsmith Stretch is MIT and librosa is ISC. The project licence is now AGPL-3.0-or-later (§9), so all of these are usable.
 
 ---
 
@@ -250,9 +250,10 @@ Only proceed for a source if its terms allow it or the owner agrees.
 
 ## 9. Open questions
 
-- [ ] What do the Looperman and Sample Focus terms say about automated access?
+- [x] What do the Looperman terms say about automated access? They prohibit "downloaders, page scrapers … web scraping" and any "robot, spider … or other data mining technology", except standard browser use (checked 1 Nov 2026). The project owner decided to build the Looperman provider anyway, with safeguards: opt-in with a notice about the terms, the user's own login, user-initiated requests only, throttled, honest User-Agent. Contacting Looperman for permission is still recommended.
+- [ ] What do the Sample Focus terms say about automated access?
 - [ ] Are previews public URLs, or tied to sessions?
-- [ ] Project licence: MIT (permissive) or GPL (allows Rubber Band/Essentia)?
+- [x] Project licence: **AGPL-3.0-or-later** (decided 1 Nov 2026). It matches JUCE's free AGPLv3 option and allows Rubber Band/Essentia.
 - [ ] Tauri or Electron, after the Phase 0 drag spike?
 - [ ] Is the plugin shell worth it, or is a small always-on-top standalone window enough for FL Studio users?
 - [ ] Windows only for v1, or also macOS?

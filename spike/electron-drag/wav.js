@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Generates small test loops so the spike needs no downloaded audio.
 const fs = require('node:fs');
 const path = require('node:path');

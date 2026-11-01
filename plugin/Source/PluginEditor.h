@@ -1,7 +1,12 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include "LoopermanView.h"
 #include "PluginProcessor.h"
 
 // Hosts the web UI (../ui) in a WebView2 browser. The page calls the native functions registered in
@@ -27,9 +32,17 @@ private:
     void addFolder (NativeFunctionCompletion);
     void startDrag (const juce::String& path, NativeFunctionCompletion);
 
+    // Looperman is opt-in: its session view only exists (and only loads looperman.com) when enabled.
+    void setLoopermanEnabled (bool);
+    juce::var loopermanState() const;
+    void loopermanPreview (const juce::String& id, NativeFunctionCompletion);
+    void loopermanDownload (const juce::String& id, NativeFunctionCompletion);
+
     FreeloopsProcessor& owner;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::WebBrowserComponent browser; // after owner: its options capture this editor
+    std::unique_ptr<LoopermanView> looperman;
+    int loopermanPreviewRequest = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreeloopsEditor)
 };

@@ -1,8 +1,13 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Library.h"
+#include "Looperman.h"
 #include "PreviewPlayer.h"
 
 #include <atomic>
@@ -35,7 +40,8 @@ public:
     void setStateInformation (const void*, int) override {}
 
     // Message thread: decodes the file in the background, then starts it. Later requests win.
-    void startPreview (const juce::String& path);
+    // id is what the UI calls the sample (a library path, or "lm:<loop>" for Looperman).
+    void startPreview (const juce::String& path, const juce::String& id);
     void stopPreview();
 
     // Written on the audio thread, polled by the editor. 0 means the host reported no tempo.
@@ -43,6 +49,7 @@ public:
     std::atomic<bool> hostPlaying { false };
 
     PreviewPlayer preview;
+    LoopermanClient looperman;
     Library library; // last member: its thread pool is drained before anything above is destroyed
 
 private:

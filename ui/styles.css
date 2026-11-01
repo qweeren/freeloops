@@ -1,3 +1,9 @@
+/*
+  freeloops - free, open-source sample browser
+  Copyright (C) 2026 Eren and the freeloops contributors
+  SPDX-License-Identifier: AGPL-3.0-or-later
+*/
+
 :root {
   --bg: #16181b;
   --panel: #1d2024;
@@ -133,8 +139,55 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .add-folder:hover { border-color: var(--accent); color: var(--text); }
 
 .source { display: flex; align-items: center; gap: 8px; padding: 5px 8px; color: var(--faint); }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
-.soon { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.on { background: #4cc38a; }
+.dot.ready { background: var(--accent); }
+.soon { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--faint); }
+.source-btn { justify-content: flex-start; gap: 8px; }
+.source-btn .soon { margin-left: auto; }
+
+.lm-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--dim);
+  font-size: 12px;
+}
+.lm-bar[hidden] { display: none; }
+.lm-logo { font-weight: 700; color: var(--text); }
+.lm-actions { margin-left: auto; display: flex; gap: 4px; }
+.link-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+}
+.link-btn:hover { color: var(--text); border-color: var(--dim); }
+.link-btn.primary { border-color: var(--accent); color: var(--text); }
+.link-btn[hidden] { display: none; }
+
+.dl {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 1;
+}
+.dl:hover { color: var(--text); }
+.dl.done { color: #4cc38a; }
+.dl.busy { color: var(--accent); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.empty .fine { font-size: 12px; color: var(--faint); max-width: 460px; }
+.load-more { position: absolute; left: 0; right: 0; height: var(--row-h); display: grid; place-items: center; color: var(--faint); font-size: 12px; }
 
 /* ---------- main ---------- */
 

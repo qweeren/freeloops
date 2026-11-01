@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -36,12 +40,12 @@ void FreeloopsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     preview.render (buffer);
 }
 
-void FreeloopsProcessor::startPreview (const juce::String& path)
+void FreeloopsProcessor::startPreview (const juce::String& path, const juce::String& id)
 {
     const auto request = ++previewRequest;
     juce::WeakReference<FreeloopsProcessor> weak (this);
 
-    library.getPool().addJob ([this, weak, path, request]
+    library.getPool().addJob ([this, weak, path, id, request]
     {
         std::unique_ptr<juce::AudioFormatReader> reader { library.getFormats().createReaderFor (juce::File (path)) };
         if (reader == nullptr || reader->sampleRate <= 0)
@@ -54,10 +58,10 @@ void FreeloopsProcessor::startPreview (const juce::String& path)
         reader->read (&clip->audio, 0, length, 0, true, true);
         clip->sampleRate = reader->sampleRate;
 
-        juce::MessageManager::callAsync ([weak, path, request, clip]
+        juce::MessageManager::callAsync ([weak, id, request, clip]
         {
             if (auto* p = weak.get(); p != nullptr && p->previewRequest == request)
-                p->preview.play (path, clip);
+                p->preview.play (id, clip);
         });
     });
 }

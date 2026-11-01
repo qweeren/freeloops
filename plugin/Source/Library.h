@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -41,6 +45,9 @@ public:
 
     // Folders, favorites flags and every sample, in the shape ui/app.js expects.
     juce::var toVar() const;
+
+    // Shared settings file (%APPDATA%\freeloops\freeloops.settings) for other features' options.
+    juce::PropertiesFile& getSettings() { return settings; }
 
     juce::AudioFormatManager& getFormats() { return formats; }
     juce::ThreadPool& getPool() { return pool; }

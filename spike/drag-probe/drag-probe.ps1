@@ -1,3 +1,7 @@
+# freeloops - free, open-source sample browser
+# Copyright (C) 2026 Eren and the freeloops contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Phase 0 drag probe.
 #   1. Drag source: starts a plain Win32/OLE file drag with a chosen set of drop effects,
 #      to find which effects FL Studio accepts.

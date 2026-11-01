@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // window.fl: the only way the UI talks to the native side.
 //   fl.call(name, ...args) -> Promise   (JUCE native functions, see plugin/Source/PluginEditor.cpp)
 //   fl.on(event, handler)               (events emitted by the plugin: "library", "status", "dragEnded")
@@ -154,7 +158,55 @@
         console.log("[mock] reveal", id);
         return true;
       },
+
+      lmState: () => ({ ...lm, signingIn: false, folder: "C:\\Users\\you\\Music\\freeloops\\Looperman" }),
+      lmSetEnabled: (on) => {
+        lm.enabled = !!on;
+        if (!on) lm.signedIn = false;
+        return api.lmState();
+      },
+      lmSearch: (query, page) => new Promise((resolve) => setTimeout(() => {
+        const r = rand(page * 977 + query.length);
+        const pick = (arr) => arr[Math.floor(r() * arr.length)];
+        const loops = [];
+        for (let i = 0; i < 25; i++) {
+          const n = (page - 1) * 25 + i;
+          const title = `${query ? query.replace(/\b\w/g, (c) => c.toUpperCase()) + " " : ""}${pick(loopWords)} ${pick(loopWords)} Loop`;
+          loops.push({
+            id: `lm:${430000 + n}`, name: title, author: pick(["NOFVCEXX", "Danke", "SoulBeats", "Lowkey808", "ProdByRay"]),
+            genre: pick(["Trap", "Hip Hop", "Lofi", "Drill", "House"]), category: pick(["Piano", "Synth", "Guitar", "Vocal"]),
+            key: pick(["D#m", "Am", "C", "F#m", "Bb", ""]), bpm: pick([90, 120, 130, 140, 145, 160]),
+            duration: 8 + r() * 25, url: "", path: "",
+          });
+        }
+        resolve({ loops, page, hasMore: page < 3 });
+      }, 700)),
+      lmPreview: (id) => {
+        preview = id;
+        progress = 0;
+        return true;
+      },
+      lmDownload: (id) => new Promise((resolve) => setTimeout(() => {
+        resolve(lm.signedIn ? { path: `C:\\Users\\you\\Music\\freeloops\\Looperman\\${id.slice(3)}.wav` } : { error: "signed-out" });
+      }, 900)),
+      lmSignIn: () => {
+        setTimeout(() => {
+          lm.signedIn = true;
+          emit("lmState", api.lmState());
+        }, 800);
+        return true;
+      },
+      lmSignOut: () => {
+        lm.signedIn = false;
+        emit("lmState", api.lmState());
+        return true;
+      },
+      lmOpen: (id) => {
+        console.log("[mock] open on Looperman", id);
+        return true;
+      },
     };
+    const lm = { enabled: false, signedIn: false };
 
     build();
 

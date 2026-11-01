@@ -1,4 +1,9 @@
 <!doctype html>
+<!--
+  freeloops - free, open-source sample browser
+  Copyright (C) 2026 Eren and the freeloops contributors
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -32,8 +37,8 @@
 
       <div class="section-title">Online sources</div>
       <ul class="sources">
+        <li><button class="view source-btn" id="source-looperman" data-source="looperman"><span class="dot" id="lm-dot"></span>Looperman<span class="soon" id="lm-badge">off</span></button></li>
         <li class="source"><span class="dot"></span>Freesound<span class="soon">soon</span></li>
-        <li class="source"><span class="dot"></span>Looperman<span class="soon">soon</span></li>
         <li class="source"><span class="dot"></span>Sample Focus<span class="soon">soon</span></li>
       </ul>
     </aside>
@@ -68,6 +73,7 @@
         <label class="filter">
           <span>Sort</span>
           <select id="sort">
+            <option value="default">Default</option>
             <option value="name">Name</option>
             <option value="bpm">BPM</option>
             <option value="key">Key</option>
@@ -76,6 +82,16 @@
           </select>
         </label>
         <span class="result-count" id="result-count"></span>
+      </div>
+
+      <div class="lm-bar" id="lm-bar" hidden>
+        <span class="lm-logo">Looperman</span>
+        <span id="lm-status"></span>
+        <span class="lm-actions">
+          <button class="link-btn" id="lm-signin">Sign in to download</button>
+          <button class="link-btn" id="lm-signout">Sign out</button>
+          <button class="link-btn" id="lm-off">Turn off</button>
+        </span>
       </div>
 
       <div class="list-head">

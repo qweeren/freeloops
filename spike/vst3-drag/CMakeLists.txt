@@ -1,3 +1,7 @@
+# freeloops - free, open-source sample browser
+# Copyright (C) 2026 Eren and the freeloops contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 cmake_minimum_required(VERSION 3.22)
 project(FreeloopsSpike VERSION 0.0.1)
 

@@ -1,3 +1,7 @@
+# freeloops - free, open-source sample browser
+# Copyright (C) 2026 Eren and the freeloops contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 cmake_minimum_required(VERSION 3.22)
 project(Freeloops VERSION 0.1.0)
 
@@ -43,6 +47,8 @@ juce_add_binary_data(FreeloopsUI SOURCES
 
 target_sources(Freeloops PRIVATE
     Source/Library.cpp
+    Source/Looperman.cpp
+    Source/LoopermanView.cpp
     Source/PreviewPlayer.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
@@ -54,6 +60,14 @@ target_compile_definitions(Freeloops PUBLIC
     JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0)
+
+# Parser check against a saved Looperman page (see tests/LoopermanParseTest.cpp).
+juce_add_console_app(LoopermanParseTest PRODUCT_NAME "LoopermanParseTest")
+target_sources(LoopermanParseTest PRIVATE tests/LoopermanParseTest.cpp Source/Looperman.cpp)
+target_compile_features(LoopermanParseTest PRIVATE cxx_std_17)
+target_compile_definitions(LoopermanParseTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_link_libraries(LoopermanParseTest PRIVATE juce::juce_core juce::juce_events
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 target_link_libraries(Freeloops
     PRIVATE

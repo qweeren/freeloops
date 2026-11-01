@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "PluginEditor.h"
 
 #include <BinaryData.h>
@@ -43,6 +47,19 @@ namespace
     {
         return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("freeloops");
     }
+
+    juce::var errorResult (const juce::String& message)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("error", message);
+        return juce::var (o);
+    }
+
+    // "lm:435464" -> "435464"
+    juce::String loopermanId (const juce::var& id)
+    {
+        return id.toString().fromFirstOccurrenceOf ("lm:", false, false);
+    }
 }
 
 //==============================================================================
@@ -58,16 +75,24 @@ FreeloopsEditor::FreeloopsEditor (FreeloopsProcessor& p)
     setResizeLimits (640, 420, 2400, 1600);
     setSize (1000, 640);
     startTimerHz (15);
+
+    if (owner.library.getSettings().getBoolValue ("looperman.enabled"))
+        setLoopermanEnabled (true);
 }
 
 FreeloopsEditor::~FreeloopsEditor()
 {
+    looperman.reset(); // fails any queued downloads while the page can still receive the result
     owner.library.removeChangeListener (this);
 }
 
 void FreeloopsEditor::resized()
 {
     browser.setBounds (getLocalBounds());
+
+    // The Looperman session page works in the background; signing in happens in its own popup window.
+    if (looperman != nullptr)
+        looperman->setBounds (0, 0, 1, 1);
 }
 
 //==============================================================================
@@ -118,19 +143,34 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
         {
             const auto path = args[0].toString();
             const auto ok = owner.library.contains (path);
+            ++loopermanPreviewRequest;
             if (ok)
-                owner.startPreview (path);
+                owner.startPreview (path, path);
             done (ok);
         })
         .withNativeFunction ("stopPreview", [this] (Args, NativeFunctionCompletion done)
         {
+            ++loopermanPreviewRequest;
             owner.stopPreview();
             done (true);
         })
         .withNativeFunction ("getPeaks", [this] (Args args, NativeFunctionCompletion done)
         {
-            const auto path = args[0].toString();
-            if (! owner.library.contains (path))
+            auto path = args[0].toString();
+            if (path.startsWith ("lm:"))
+            {
+                // A Looperman loop has peaks once it's been auditioned or downloaded.
+                auto file = owner.looperman.findDownload (loopermanId (path));
+                if (! file.existsAsFile())
+                    file = owner.looperman.findCached (loopermanId (path));
+                path = file.getFullPathName();
+            }
+            else if (! owner.library.contains (path))
+            {
+                path = {};
+            }
+
+            if (path.isEmpty())
             {
                 done ({});
                 return;
@@ -153,7 +193,148 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
             if (owner.library.contains (path))
                 juce::File (path).revealToUser();
             done (true);
+        })
+
+        // ---- Looperman (opt-in) ----
+        .withNativeFunction ("lmState", [this] (Args, NativeFunctionCompletion done)
+        {
+            done (loopermanState());
+        })
+        .withNativeFunction ("lmSetEnabled", [this] (Args args, NativeFunctionCompletion done)
+        {
+            setLoopermanEnabled ((bool) args[0]);
+            done (loopermanState());
+        })
+        .withNativeFunction ("lmSearch", [this] (Args args, NativeFunctionCompletion done)
+        {
+            if (looperman == nullptr)
+            {
+                done (errorResult ("Looperman is turned off"));
+                return;
+            }
+
+            juce::Component::SafePointer<FreeloopsEditor> safe (this);
+            owner.looperman.search (args[0].toString(), (int) args[1], [safe, done] (juce::var result)
+            {
+                if (safe != nullptr)
+                    done (result);
+            });
+        })
+        .withNativeFunction ("lmPreview", [this] (Args args, NativeFunctionCompletion done)
+        {
+            loopermanPreview (args[0].toString(), std::move (done));
+        })
+        .withNativeFunction ("lmDownload", [this] (Args args, NativeFunctionCompletion done)
+        {
+            loopermanDownload (args[0].toString(), std::move (done));
+        })
+        .withNativeFunction ("lmSignIn", [this] (Args, NativeFunctionCompletion done)
+        {
+            if (looperman != nullptr)
+                looperman->showSignIn();
+            done (true);
+        })
+        .withNativeFunction ("lmSignOut", [this] (Args, NativeFunctionCompletion done)
+        {
+            if (looperman != nullptr)
+                looperman->signOut();
+            done (true);
+        })
+        .withNativeFunction ("lmOpen", [this] (Args args, NativeFunctionCompletion done)
+        {
+            if (const auto* loop = owner.looperman.find (loopermanId (args[0])))
+                juce::URL (loop->detailUrl).launchInDefaultBrowser();
+            done (true);
         });
+}
+
+//==============================================================================
+void FreeloopsEditor::setLoopermanEnabled (bool enabled)
+{
+    auto& settings = owner.library.getSettings();
+    settings.setValue ("looperman.enabled", enabled);
+    settings.saveIfNeeded();
+
+    if (enabled && looperman == nullptr)
+    {
+        looperman = std::make_unique<LoopermanView> (owner.looperman);
+        looperman->onStateChange = [this] { browser.emitEventIfBrowserIsVisible ("lmState", loopermanState()); };
+        addAndMakeVisible (*looperman);
+    }
+    else if (! enabled)
+    {
+        looperman.reset();
+    }
+
+    resized();
+}
+
+juce::var FreeloopsEditor::loopermanState() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("enabled", looperman != nullptr);
+    o->setProperty ("signedIn", looperman != nullptr && looperman->isSignedIn());
+    o->setProperty ("signingIn", looperman != nullptr && looperman->isSigningIn());
+    o->setProperty ("folder", LoopermanClient::downloadsFolder().getFullPathName());
+    return juce::var (o);
+}
+
+void FreeloopsEditor::loopermanPreview (const juce::String& id, NativeFunctionCompletion done)
+{
+    if (looperman == nullptr)
+    {
+        done (errorResult ("Looperman is turned off"));
+        return;
+    }
+
+    // Looperman refuses direct requests for its MP3 previews, so a loop is auditioned from a download
+    // made with the user's own session (kept in the audition cache unless they drag it).
+    const auto request = ++loopermanPreviewRequest;
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    looperman->download (loopermanId (id), false, [safe, id, request, done] (juce::File file, juce::String error)
+    {
+        if (safe == nullptr)
+            return;
+
+        if (! file.existsAsFile())
+        {
+            done (errorResult (error));
+            return;
+        }
+
+        if (request == safe->loopermanPreviewRequest) // the user hasn't moved on to another sample
+            safe->owner.startPreview (file.getFullPathName(), id);
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("ok", true);
+        done (juce::var (o));
+    });
+}
+
+void FreeloopsEditor::loopermanDownload (const juce::String& id, NativeFunctionCompletion done)
+{
+    if (looperman == nullptr)
+    {
+        done (errorResult ("Looperman is turned off"));
+        return;
+    }
+
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    looperman->download (loopermanId (id), true, [safe, done] (juce::File file, juce::String error)
+    {
+        if (safe == nullptr)
+            return;
+
+        if (! file.existsAsFile())
+        {
+            done (errorResult (error));
+            return;
+        }
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("path", file.getFullPathName());
+        done (juce::var (o));
+    });
 }
 
 //==============================================================================
@@ -172,7 +353,10 @@ void FreeloopsEditor::addFolder (NativeFunctionCompletion done)
 
 void FreeloopsEditor::startDrag (const juce::String& path, NativeFunctionCompletion done)
 {
-    if (! owner.library.contains (path) || ! juce::File (path).existsAsFile())
+    // Only files freeloops knows about: library samples and loops it downloaded from Looperman.
+    const juce::File file (path);
+    const auto known = owner.library.contains (path) || file.isAChildOf (LoopermanClient::downloadsFolder());
+    if (! known || ! file.existsAsFile())
     {
         done (false);
         return;

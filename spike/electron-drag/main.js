@@ -1,3 +1,7 @@
+// freeloops - free, open-source sample browser
+// Copyright (C) 2026 Eren and the freeloops contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 const { app, BrowserWindow, ipcMain, nativeImage, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');

@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "Phase 0 spike: drag a cached .wav out of a desktop window into FL Studio",
+  "license": "AGPL-3.0-or-later",
   "main": "main.js",
   "scripts": {
     "start": "electron ."
