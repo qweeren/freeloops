@@ -38,7 +38,7 @@
       <div class="section-title">Online sources</div>
       <ul class="sources">
         <li><button class="view source-btn" id="source-looperman" data-source="looperman"><span class="dot" id="lm-dot"></span>Looperman<span class="soon" id="lm-badge">off</span></button></li>
-        <li class="source"><span class="dot"></span>Freesound<span class="soon">soon</span></li>
+        <li><button class="view source-btn" id="source-freesound" data-source="freesound"><span class="dot" id="fs-dot"></span>Freesound<span class="soon" id="fs-badge">set up</span></button></li>
         <li class="source"><span class="dot"></span>Sample Focus<span class="soon">soon</span></li>
       </ul>
     </aside>
@@ -84,13 +84,23 @@
         <span class="result-count" id="result-count"></span>
       </div>
 
-      <div class="lm-bar" id="lm-bar" hidden>
-        <span class="lm-logo">Looperman</span>
+      <div class="source-bar" id="lm-bar" hidden>
+        <span class="source-logo">Looperman</span>
         <span id="lm-status"></span>
-        <span class="lm-actions">
+        <span class="source-actions">
           <button class="link-btn" id="lm-signin">Sign in to download</button>
           <button class="link-btn" id="lm-signout">Sign out</button>
           <button class="link-btn" id="lm-off">Turn off</button>
+        </span>
+      </div>
+
+      <div class="source-bar" id="fs-bar" hidden>
+        <span class="source-logo">Freesound</span>
+        <span id="fs-status"></span>
+        <span class="source-actions">
+          <button class="link-btn" id="fs-signin">Sign in to download</button>
+          <button class="link-btn" id="fs-signout">Sign out</button>
+          <button class="link-btn" id="fs-key">API key</button>
         </span>
       </div>
 

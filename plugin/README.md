@@ -19,11 +19,44 @@ everything the page can't do itself:
 | `lmSignIn` / `lmSignOut` | Show Looperman's own login page inside the plugin / sign out |
 | `lmDownload` | Download a loop with the user's signed-in session into `Music\freeloops\Looperman` |
 | `lmOpen` | Open the loop's page on looperman.com |
+| `fsState` / `fsSetCredentials` | Freesound API key and sign-in state / save the user's client ID and API key |
+| `fsSearch` | One page of Freesound search results; BPM and key filters are applied by Freesound |
+| `fsPreview` | Fetch the sound's HQ Ogg preview (to a cache) and play it through the plugin |
+| `fsSignIn` / `fsSignOut` | Freesound's OAuth2 page in a popup / forget the sign-in |
+| `fsDownload` | Download the original file with the user's account into `Music\freeloops\Freesound` |
+| `fsOpen`, `fsOpenApply`, `fsCopyCredit` | Open the sound's page / the API key form; copy a sound's attribution |
 
 Events back to the page: `library` (after scans and folder changes), `status` (15×/s: host tempo, preview
-progress), `dragEnded`, `lmState`.
+progress), `dragEnded`, `lmState`, `fsState`.
 
-Sources: your own sample folders, and Looperman (opt-in). See [docs/PLAN.md](../docs/PLAN.md).
+Sources: your own sample folders, Freesound, and Looperman (opt-in). See [docs/PLAN.md](../docs/PLAN.md).
+
+## Freesound
+
+Freesound has an official API ([`Freesound.cpp`](Source/Freesound.cpp)). Each user brings their own API
+credentials, because a key is limited to 2,000 requests a day: the Freesound screen walks them through
+[freesound.org/apiv2/apply](https://freesound.org/apiv2/apply) and stores the client ID and API key in
+`freeloops.settings`. Personal builds can compile credentials in instead:
+`-DFREELOOPS_FREESOUND_CLIENT_ID=... -DFREELOOPS_FREESOUND_API_KEY=...`.
+
+- **Search** uses the API key only. Requests run one at a time, at most one every 1.1 s (Freesound allows 60 a
+  minute), are cached for the session, and name freeloops in the User-Agent. BPM and key filters go to
+  Freesound (`bpm:[137 TO 143]`, `tonality:"A minor"`), since most sounds have no tempo.
+- **Previews** are Freesound's public HQ Ogg files, fetched into `%APPDATA%\freeloops\cache\freesound-previews`
+  (capped at 300 MB) and played through the plugin. No account needed.
+- **Downloads** of the original file need OAuth2. [`FreesoundSignIn`](Source/FreesoundSignIn.cpp) opens Freesound's
+  own authorize page in a popup; freeloops never sees the password. The redirect back is caught before it loads
+  (whatever callback URL the credentials name), the code is exchanged for tokens, and the refresh token is saved
+  in `freeloops.settings` so the sign-in lasts. Files go to `Music\freeloops\Freesound` as
+  `Name - 120bpm - Am - author [fs415987].wav`.
+- **Licences:** every result shows its licence (CC0, CC BY, CC BY-NC). Each download adds the sound's
+  attribution to `CREDITS.txt` in that folder, and **C** copies the selected sound's attribution.
+- `FreesoundParseTest` checks the reply parser and the search filters against a hand-written sample reply, or a
+  real one with `--live`:
+
+```bash
+build/FreesoundParseTest_artefacts/Release/FreesoundParseTest.exe tests/freesound-search.json
+```
 
 ## Looperman
 

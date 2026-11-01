@@ -13,6 +13,7 @@ namespace
 FreeloopsProcessor::FreeloopsProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    freesound.attachSettings (library.getSettings());
 }
 
 bool FreeloopsProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const

@@ -6,6 +6,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "Freesound.h"
 #include "Library.h"
 #include "Looperman.h"
 #include "PreviewPlayer.h"
@@ -40,7 +41,7 @@ public:
     void setStateInformation (const void*, int) override {}
 
     // Message thread: decodes the file in the background, then starts it. Later requests win.
-    // id is what the UI calls the sample (a library path, or "lm:<loop>" for Looperman).
+    // id is what the UI calls the sample (a library path, "lm:<loop>" for Looperman, "fs:<sound>" for Freesound).
     void startPreview (const juce::String& path, const juce::String& id);
     void stopPreview();
 
@@ -50,6 +51,7 @@ public:
 
     PreviewPlayer preview;
     LoopermanClient looperman;
+    FreesoundClient freesound;
     Library library; // last member: its thread pool is drained before anything above is destroyed
 
 private:

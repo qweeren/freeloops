@@ -205,8 +205,69 @@
         console.log("[mock] open on Looperman", id);
         return true;
       },
+
+      fsState: () => ({
+        ...fs, configured: !!fs.apiKey, canSignIn: !!(fs.apiKey && fs.clientId), builtIn: false,
+        apiKey: undefined, signingIn: false, folder: "C:\\Users\\you\\Music\\freeloops\\Freesound",
+      }),
+      fsSetCredentials: (clientId, apiKey) => {
+        Object.assign(fs, { clientId, apiKey, signedIn: false, username: "" });
+        return api.fsState();
+      },
+      fsSearch: (query, page, filters) => new Promise((resolve) => setTimeout(() => {
+        if (!fs.apiKey) return resolve({ error: "no-key" });
+        const r = rand(page * 131 + query.length + JSON.stringify(filters || {}).length);
+        const pick = (arr) => arr[Math.floor(r() * arr.length)];
+        const sounds = [];
+        for (let i = 0; i < 30; i++) {
+          const n = (page - 1) * 30 + i;
+          const loop = r() < 0.5;
+          const range = filters && filters.bpm && filters.bpm[0];
+          const bpm = range ? Math.round(range[0] ?? 100) + 1 : loop && r() < 0.7 ? pick([90, 100, 120, 128, 140]) : 0;
+          sounds.push({
+            id: `fs:${400000 + n}`, name: `${query ? query + " " : ""}${loop ? `${pick(loopWords)} loop` : pick(shotWords)} ${n}`,
+            author: pick(["InspectorJ", "klankbeeld", "Erokia", "Setuniman", "unfa"]),
+            license: pick(["CC0", "CC BY 4.0", "CC BY 3.0", "CC BY-NC 4.0"]),
+            key: filters && filters.key ? filters.key : pick(["Am", "C", "F#m", "", ""]), bpm,
+            duration: loop ? 4 + r() * 12 : 0.2 + r() * 2, url: "", path: "",
+          });
+        }
+        resolve({ sounds, page, hasMore: page < 4 });
+      }, 500)),
+      fsPreview: (id) => {
+        preview = id;
+        progress = 0;
+        return { ok: true };
+      },
+      fsDownload: (id) => new Promise((resolve) => setTimeout(() => {
+        resolve(fs.signedIn ? { path: `C:\\Users\\you\\Music\\freeloops\\Freesound\\${id.slice(3)}.wav` } : { error: "signed-out" });
+      }, 900)),
+      fsSignIn: () => {
+        setTimeout(() => {
+          Object.assign(fs, { signedIn: true, username: "you" });
+          emit("fsState", api.fsState());
+        }, 800);
+        return { ...api.fsState(), signingIn: true };
+      },
+      fsSignOut: () => {
+        Object.assign(fs, { signedIn: false, username: "" });
+        return api.fsState();
+      },
+      fsOpen: (id) => {
+        console.log("[mock] open on Freesound", id);
+        return true;
+      },
+      fsOpenApply: () => {
+        console.log("[mock] open freesound.org/apiv2/apply");
+        return true;
+      },
+      fsCopyCredit: (id) => {
+        console.log("[mock] copy credit", id);
+        return true;
+      },
     };
     const lm = { enabled: false, signedIn: false };
+    const fs = { clientId: "", apiKey: "", signedIn: false, username: "" };
 
     build();
 

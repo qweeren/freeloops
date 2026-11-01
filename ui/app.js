@@ -23,20 +23,55 @@
     rescan: $("rescan"), views: $("views"),
     lmButton: $("source-looperman"), lmDot: $("lm-dot"), lmBadge: $("lm-badge"), lmBar: $("lm-bar"),
     lmStatus: $("lm-status"), lmSignIn: $("lm-signin"), lmSignOut: $("lm-signout"), lmOff: $("lm-off"),
+    fsButton: $("source-freesound"), fsDot: $("fs-dot"), fsBadge: $("fs-badge"), fsBar: $("fs-bar"),
+    fsStatus: $("fs-status"), fsSignIn: $("fs-signin"), fsSignOut: $("fs-signout"), fsKey: $("fs-key"),
   };
 
   const state = {
     samples: [], byId: new Map(), folders: [], scanning: false,
-    source: "local", // "local" (the user's folders) or "looperman"
+    source: "local", // "local" (the user's folders), or an online source: "looperman", "freesound"
     view: "all", query: "", bpmMode: "any", key: "", sort: "default", shuffle: new Map(),
     results: [], selectedId: null,
     previewId: null, previewProgress: 0, previewPlaying: false,
     hostBpm: 0, hostPlaying: false,
     lm: {
       enabled: false, signedIn: false, folder: "",
-      results: [], byId: new Map(), page: 0, hasMore: false, loading: false, error: null, searched: null,
+      results: [], byId: new Map(), page: 0, hasMore: false, loading: false, error: null, searched: null, sig: null,
+    },
+    fs: {
+      configured: false, canSignIn: false, builtIn: false, clientId: "", signedIn: false, signingIn: false,
+      username: "", folder: "", editing: false,
+      results: [], byId: new Map(), page: 0, hasMore: false, loading: false, error: null, searched: null, sig: null,
     },
   };
+
+  // Online sources. Search text goes to the source; BPM, key and sort apply to what has loaded.
+  // Freesound also takes the BPM and key filters itself (most of its sounds have no tempo).
+  const SOURCES = {
+    looperman: {
+      label: "Looperman", prefix: "lm", unit: "loop", list: "loops",
+      st: () => state.lm,
+      ready: () => state.lm.enabled,
+      search: (query, page) => window.fl.call("lmSearch", query, page),
+      signature: (query) => query,
+    },
+    freesound: {
+      label: "Freesound", prefix: "fs", unit: "sound", list: "sounds",
+      st: () => state.fs,
+      ready: () => state.fs.configured && !state.fs.editing,
+      search: (query, page) => window.fl.call("fsSearch", query, page, freesoundFilters()),
+      signature: (query) => `${query} ${JSON.stringify(freesoundFilters())}`,
+    },
+  };
+  const SOURCE_BY_PREFIX = { lm: "looperman", fs: "freesound" };
+
+  function online() {
+    return SOURCES[state.source] || null;
+  }
+
+  function sourceOf(s) {
+    return SOURCES[SOURCE_BY_PREFIX[s.src]];
+  }
 
   // ---------------------------------------------------------------- filename parsing
 
@@ -101,18 +136,21 @@
     return { pc, minor, label: SHARPS[pc] + (minor ? "m" : "") };
   }
 
-  function enrichLooperman(raw) {
+  function enrichOnline(raw, src) {
+    const details = src === "fs" ? [raw.license] : [raw.genre, raw.category];
+    const bpm = raw.bpm || (src === "fs" ? parseBpm(raw.name, /loop/i.test(raw.name)) : null);
     return {
       id: raw.id,
-      lm: true,
+      src, // "lm" or "fs"
       name: raw.name,
-      folder: `by ${raw.author || "unknown"}${raw.genre ? ` · ${raw.genre}` : ""}${raw.category ? ` · ${raw.category}` : ""}`,
+      folder: [`by ${raw.author || "unknown"}`, ...details.filter(Boolean)].join(" · "),
       author: raw.author,
+      license: raw.license || "",
       path: raw.path || "",
       fav: false,
-      bpm: raw.bpm || null,
+      bpm: bpm || null,
       key: normalizeKey(raw.key),
-      isLoop: true,
+      isLoop: src === "lm" || !!bpm,
       hay: "",
       peaks: null,
       duration: typeof raw.duration === "number" && raw.duration > 0 ? raw.duration : null,
@@ -178,7 +216,7 @@
       case "folder": return a.folder.localeCompare(b.folder, undefined, { numeric: true }) || byName;
       case "random": return shuffleRank(a) - shuffleRank(b);
       case "name": return byName;
-      default: return a.lm && b.lm ? a.order - b.order : byName; // Looperman's own order (newest first)
+      default: return a.src && b.src ? a.order - b.order : byName; // the source's own order
     }
   }
 
@@ -192,9 +230,10 @@
   }
 
   function applyFilters({ keepScroll = false } = {}) {
-    if (state.source === "looperman") {
-      // The search text already went to Looperman; BPM, key and sort still apply here.
-      state.results = state.lm.results.filter((s) => bpmMatches(s) && keyMatches(s));
+    const src = online();
+    if (src) {
+      // The search text already went to the source; BPM, key and sort still apply here.
+      state.results = src.ready() ? src.st().results.filter((s) => bpmMatches(s) && keyMatches(s)) : [];
     } else {
       const tokens = state.query.toLowerCase().split(/\s+/).filter(Boolean);
       state.results = state.samples.filter((s) =>
@@ -250,11 +289,12 @@
         + `<span class="badge key ${s.key ? "" : "empty-cell"}">${s.key ? s.key.label : "-"}</span>`
         + `<span class="num ${s.bpm ? "" : "empty-cell"}">${s.bpm ?? "-"}</span>`
         + `<span class="num">${formatTime(s.duration)}</span>`
-        + (s.lm ? downloadButton(s) : `<button class="fav ${s.fav ? "on" : ""}" tabindex="-1" title="Favorite (F)">${s.fav ? "★" : "☆"}</button>`)
+        + (s.src ? downloadButton(s) : `<button class="fav ${s.fav ? "on" : ""}" tabindex="-1" title="Favorite (F)">${s.fav ? "★" : "☆"}</button>`)
         + `</div>`;
     }
-    if (state.source === "looperman" && (state.lm.hasMore || state.lm.loading) && last === state.results.length) {
-      html += `<div class="load-more" style="top:${state.results.length * ROW_H}px">${state.lm.loading ? "Loading more from Looperman..." : "Scroll for more"}</div>`;
+    const src = online();
+    if (src && (src.st().hasMore || src.st().loading) && last === state.results.length) {
+      html += `<div class="load-more" style="top:${state.results.length * ROW_H}px">${src.st().loading ? `Loading more from ${src.label}...` : "Scroll for more"}</div>`;
     }
     els.rows.innerHTML = html;
     for (const row of els.rows.querySelectorAll(".row")) {
@@ -267,7 +307,8 @@
   function downloadButton(s) {
     if (s.path) return `<button class="dl done" tabindex="-1" title="Downloaded. Drag it into FL Studio">✓</button>`;
     if (s.downloading) return `<button class="dl busy" tabindex="-1" title="Downloading...">⤓</button>`;
-    return `<button class="dl" tabindex="-1" title="Download with your Looperman account">⤓</button>`;
+    const how = s.src === "fs" ? "the original file with your Freesound account" : "with your Looperman account";
+    return `<button class="dl" tabindex="-1" title="Download ${how}">⤓</button>`;
   }
 
   function rowFor(s) {
@@ -338,6 +379,18 @@
       } else if (state.results.length === 0 && lm.searched !== null) {
         html = `<h2>No loops found</h2><p>Try other words, or clear the BPM and key filters.</p>`;
       }
+    } else if (state.source === "freesound") {
+      const fs = state.fs;
+      if (!fs.configured || fs.editing) {
+        html = freesoundSetup();
+      } else if (fs.error && state.results.length === 0) {
+        html = `<h2>Freesound isn't responding</h2><p>${esc(fs.error)}</p>`
+          + (/API key/.test(fs.error) ? `<button class="cta" data-action="fs-edit">Change the API key</button>` : "");
+      } else if (fs.loading && state.results.length === 0) {
+        html = `<h2>Searching Freesound...</h2>`;
+      } else if (state.results.length === 0 && fs.searched !== null) {
+        html = `<h2>No sounds found</h2><p>Try other words, or clear the BPM and key filters. Freesound only knows the tempo and key of sounds it has analysed.</p>`;
+      }
     } else if (state.folders.length === 0) {
       html = `<h2>Add your sample folders</h2><p>freeloops indexes the folders you choose. Nothing is uploaded or copied. Then search, preview and drag samples straight into FL Studio.</p><button class="cta" data-action="add-folder">Add a folder</button>`;
     } else if (state.scanning && state.samples.length === 0) {
@@ -347,6 +400,24 @@
     }
     els.empty.innerHTML = html;
     els.empty.hidden = html === "";
+  }
+
+  function freesoundSetup() {
+    const fs = state.fs;
+    return `<h2>Freesound</h2>`
+      + `<p>Search and preview Freesound's Creative Commons sounds right here, then drag them into FL Studio. Freesound needs a free API key, made with your own Freesound account:</p>`
+      + `<ol class="steps">`
+      + `<li>Sign in at freesound.org (or make a free account) and <button class="link-btn inline" data-action="fs-apply">apply for API credentials</button>.</li>`
+      + `<li>Any name and description will do. Keep the callback URL Freesound suggests.</li>`
+      + `<li>Paste the <b>Client ID</b> and the <b>Client secret / API key</b> here.</li>`
+      + `</ol>`
+      + `<form class="fs-form">`
+      + `<input id="fs-client-id" placeholder="Client ID" autocomplete="off" spellcheck="false" value="${esc(fs.clientId || "")}">`
+      + `<input id="fs-api-key" placeholder="Client secret / API key" autocomplete="off" spellcheck="false">`
+      + `<button class="cta" type="submit">Save</button>`
+      + (fs.editing ? `<button class="link-btn" type="button" data-action="fs-cancel">Cancel</button>` : "")
+      + `</form>`
+      + `<p class="fine">The key stays on this computer, in freeloops' settings. Searches and previews use only the key; downloading the original files also needs you to sign in to Freesound. Every sound keeps its own licence (CC0, CC BY or CC BY-NC), shown on each result. CC BY sounds need credit when you release your track: freeloops adds it to CREDITS.txt next to the files you download.</p>`;
   }
 
   function renderLooperman() {
@@ -361,14 +432,35 @@
     els.lmSignIn.classList.toggle("primary", !lm.signedIn);
     els.lmSignOut.hidden = !lm.signedIn;
     els.lmButton.classList.toggle("active", state.source === "looperman");
+    renderFreesound();
+  }
+
+  function renderFreesound() {
+    const fs = state.fs;
+    els.fsBadge.textContent = !fs.configured ? "set up" : fs.signedIn ? "on" : "ready";
+    els.fsDot.className = `dot ${fs.configured ? (fs.signedIn ? "on" : "ready") : ""}`;
+    els.fsBar.hidden = state.source !== "freesound" || !fs.configured || fs.editing;
+    els.fsStatus.textContent = fs.signedIn
+      ? `Signed in${fs.username ? ` as ${fs.username}` : ""}. Downloads are saved to ${fs.folder} · C copies a sound's credit`
+      : fs.signingIn
+        ? "Finish signing in in the Freesound window..."
+        : "Previews work with just the key. Sign in to drag the original files into FL Studio.";
+    els.fsSignIn.hidden = fs.signedIn || !fs.canSignIn;
+    els.fsSignIn.textContent = fs.signingIn ? "Signing in..." : "Sign in to download";
+    els.fsSignIn.classList.toggle("primary", !fs.signedIn);
+    els.fsSignOut.hidden = !fs.signedIn;
+    els.fsKey.hidden = fs.builtIn;
+    els.fsButton.classList.toggle("active", state.source === "freesound");
   }
 
   function renderStatus() {
-    if (state.source === "looperman") {
-      const n = state.lm.results.length;
-      els.status.textContent = state.lm.enabled
-        ? `Looperman · ${n} loop${n === 1 ? "" : "s"} loaded${state.lm.searched ? ` for "${state.lm.searched}"` : ""}`
-        : "Looperman is off";
+    const src = online();
+    if (src) {
+      const st = src.st();
+      const n = st.results.length;
+      els.status.textContent = src.ready()
+        ? `${src.label} · ${n} ${src.unit}${n === 1 ? "" : "s"} loaded${st.searched ? ` for "${st.searched}"` : ""}`
+        : state.source === "looperman" ? "Looperman is off" : "Freesound needs an API key";
       return;
     }
     const n = state.samples.length.toLocaleString();
@@ -444,7 +536,7 @@
   }
 
   function findSample(id) {
-    return state.byId.get(id) || state.lm.byId.get(id);
+    return state.byId.get(id) || state.lm.byId.get(id) || state.fs.byId.get(id);
   }
 
   function preview(s) {
@@ -452,13 +544,14 @@
     state.previewPlaying = true;
     state.previewProgress = 0;
     state.previewRequestedAt = performance.now();
-    // A Looperman loop that hasn't been auditioned yet is downloaded first, which takes a moment.
-    state.previewGraceMs = s.lm && !s.path ? 20000 : 500;
-    if (s.lm) {
-      window.fl.call("lmPreview", s.id).then((r) => {
+    // An online sound is fetched before it plays (a Looperman loop is downloaded), which takes a moment.
+    state.previewGraceMs = s.src && !s.path ? 20000 : 500;
+    if (s.src) {
+      window.fl.call(`${s.src}Preview`, s.id).then((r) => {
         if (!r || r.error) {
           const error = r && r.error;
-          toast(error === "signed-out"
+          if (s.src === "fs") toast(error ? `Couldn't load the preview from Freesound: ${error}` : "Couldn't load the preview from Freesound.");
+          else toast(error === "signed-out"
             ? "Sign in to Looperman to preview loops. Looperman only plays its previews on its own site."
             : LM_ERRORS[error] || "Couldn't load the preview from Looperman.");
           if (state.previewId === s.id) state.previewPlaying = false;
@@ -486,7 +579,7 @@
   }
 
   function toggleFavorite(s) {
-    if (s.lm) return;
+    if (s.src) return;
     s.fav = !s.fav;
     window.fl.call("setFavorite", s.id, s.fav);
     renderCounts();
@@ -505,7 +598,7 @@
     window.fl.call("addFolder");
   }
 
-  // ---------------------------------------------------------------- Looperman
+  // ---------------------------------------------------------------- online sources
 
   const LM_ERRORS = {
     "signed-out": "Sign in to Looperman to download loops.",
@@ -524,72 +617,115 @@
     lm.folder = st.folder || "";
     renderLooperman();
     if (state.source !== "looperman") return;
-    if (lm.enabled && !wasEnabled) searchLooperman(state.query, 1);
+    if (lm.enabled && !wasEnabled) searchOnline("looperman", state.query, 1);
     else applyFilters({ keepScroll: true });
   }
 
-  function searchLooperman(query, page) {
-    const lm = state.lm;
-    if (!lm.enabled) return;
-    const token = (lm.token = (lm.token || 0) + 1);
-    lm.loading = true;
-    lm.error = null;
+  const FS_ERRORS = {
+    "signed-out": "Sign in to Freesound to download the original file.",
+    "not-a-file": "Freesound sent a web page instead of the file. Right-click the sound to open it on Freesound.",
+  };
+
+  function applyFreesoundState(st) {
+    if (!st) return;
+    const fs = state.fs;
+    const wasReady = SOURCES.freesound.ready();
+    for (const k of ["configured", "canSignIn", "builtIn", "signedIn", "signingIn"]) fs[k] = !!st[k];
+    fs.clientId = st.clientId || "";
+    fs.username = st.username || "";
+    fs.folder = st.folder || "";
+    if (st.error) toast(st.error);
+    renderLooperman();
+    if (state.source !== "freesound") return;
+    if (SOURCES.freesound.ready() && !wasReady) searchOnline("freesound", state.query, 1);
+    else applyFilters({ keepScroll: true });
+  }
+
+  function searchOnline(name, query, page) {
+    const src = SOURCES[name];
+    const st = src.st();
+    if (!src.ready()) return;
+    const token = (st.token = (st.token || 0) + 1);
+    st.loading = true;
+    st.error = null;
     if (page === 1) {
-      lm.results = [];
-      lm.byId = new Map();
-      lm.searched = query;
-      lm.hasMore = false;
-      applyFilters();
+      st.results = [];
+      st.byId = new Map();
+      st.searched = query;
+      st.sig = src.signature(query);
+      st.hasMore = false;
+      if (state.source === name) applyFilters();
     }
-    window.fl.call("lmSearch", query, page).then((r) => {
-      if (token !== lm.token) return; // a newer search replaced this one
-      lm.loading = false;
-      if (!r || r.error) {
-        lm.error = (r && r.error) || "No response";
+    src.search(query, page).then((r) => {
+      if (token !== st.token) return; // a newer search replaced this one
+      st.loading = false;
+      if (r && r.error === "no-key") {
+        state.fs.configured = false;
+        st.sig = null;
+        renderLooperman();
+      } else if (!r || r.error) {
+        st.error = (r && r.error) || "No response";
       } else {
-        for (const raw of r.loops || []) {
-          if (lm.byId.has(raw.id)) continue;
-          const s = enrichLooperman(raw);
-          s.order = lm.results.length;
-          lm.byId.set(s.id, s);
-          lm.results.push(s);
+        for (const raw of r[src.list] || []) {
+          if (st.byId.has(raw.id)) continue;
+          const s = enrichOnline(raw, src.prefix);
+          s.order = st.results.length;
+          st.byId.set(s.id, s);
+          st.results.push(s);
         }
-        lm.page = page;
-        lm.hasMore = !!r.hasMore;
+        st.page = page;
+        st.hasMore = !!r.hasMore;
       }
-      applyFilters({ keepScroll: page > 1 });
+      if (state.source === name) applyFilters({ keepScroll: page > 1 });
     });
+  }
+
+  // A new search on the current source if the words (or, for Freesound, the filters) changed.
+  function refreshOnline() {
+    const src = online();
+    if (src && src.ready() && src.signature(state.query) !== src.st().sig) searchOnline(state.source, state.query, 1);
+    else applyFilters();
   }
 
   function maybeLoadMore() {
-    const lm = state.lm;
-    if (state.source !== "looperman" || !lm.hasMore || lm.loading) return;
+    const src = online();
+    const st = src && src.st();
+    if (!st || !st.hasMore || st.loading) return;
     if (els.list.scrollTop + els.list.clientHeight < els.list.scrollHeight - ROW_H * 6) return;
-    searchLooperman(lm.searched ?? "", lm.page + 1);
+    searchOnline(state.source, st.searched ?? "", st.page + 1);
   }
 
-  // Looperman loops need your account to download; only then can they be dragged into FL.
+  // Online sounds need your account to download; only then can they be dragged into FL.
   // onReady runs when the file is saved (used to start a drag the user is still holding).
-  function downloadLoop(s, onReady) {
+  function downloadOnline(s, onReady) {
     if (s.path || s.downloading) return;
-    if (!state.lm.signedIn) {
-      toast("Sign in to Looperman to download loops.");
+    const src = sourceOf(s);
+    const errors = s.src === "fs" ? FS_ERRORS : LM_ERRORS;
+    if (!src.st().signedIn) {
+      toast(errors["signed-out"]);
       return;
     }
     s.downloading = true;
-    toast(onReady ? "Getting the loop from Looperman... keep holding to drag it." : "Downloading from Looperman...");
+    toast(onReady ? `Getting the ${src.unit} from ${src.label}... keep holding to drag it.` : `Downloading from ${src.label}...`);
     renderList();
-    window.fl.call("lmDownload", s.id).then((r) => {
+    window.fl.call(`${s.src}Download`, s.id).then((r) => {
       s.downloading = false;
       if (r && r.path) {
         s.path = r.path;
-        if (!(onReady && onReady())) toast("Ready. Drag it into FL Studio.");
+        if (!(onReady && onReady())) {
+          toast(s.license.startsWith("CC BY") ? `Ready. ${s.license}: credit ${s.author} when you release it.` : "Ready. Drag it into FL Studio.");
+        }
       } else {
         const error = r && r.error;
-        toast(LM_ERRORS[error] || `Download failed: ${error || "unknown error"}`);
+        toast(errors[error] || `Download failed: ${error || "unknown error"}`);
       }
       renderList();
     });
+  }
+
+  function copyCredit(s) {
+    if (s.src !== "fs") return;
+    window.fl.call("fsCopyCredit", s.id).then((ok) => ok && toast(`Credit for "${s.name}" copied.`));
   }
 
   // ---------------------------------------------------------------- input: list
@@ -612,10 +748,10 @@
     if (!s) return;
     press.dragging = true;
 
-    if (s.lm && !s.path) {
+    if (s.src && !s.path) {
       // Not downloaded yet: fetch it, and start the drag if the button is still held when it's saved.
       const held = press;
-      return downloadLoop(s, () => {
+      return downloadOnline(s, () => {
         if (press !== held) return false;
         startFileDrag(s);
         return true;
@@ -628,7 +764,7 @@
     document.body.classList.add("dragging");
     const row = rowFor(s);
     if (row) row.classList.add("dragging");
-    window.fl.call("startDrag", s.lm ? s.path : s.id).then((ok) => {
+    window.fl.call("startDrag", s.src ? s.path : s.id).then((ok) => {
       if (!ok) toast("That file is missing. Try rescanning the folder.");
     });
   }
@@ -643,7 +779,7 @@
     const target = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
     if (!target) return;
     if (target.closest(".fav")) toggleFavorite(s);
-    else if (target.closest(".dl")) downloadLoop(s);
+    else if (target.closest(".dl")) downloadOnline(s);
     else if (target.closest(".play")) togglePreview(s);
     else if (target.closest(".row")) {
       if (s.id === state.selectedId) togglePreview(s);
@@ -661,7 +797,7 @@
     const row = e.target.closest(".row");
     if (!row) return;
     const s = state.results[+row.dataset.i];
-    if (s) window.fl.call(s.lm ? "lmOpen" : "reveal", s.id);
+    if (s) window.fl.call(s.src ? `${s.src}Open` : "reveal", s.id);
   });
 
   let scrollQueued = false;
@@ -695,23 +831,45 @@
       case " ": e.preventDefault(); if (s) togglePreview(s); break;
       case "Escape": window.fl.call("stopPreview"); state.previewPlaying = false; renderList(); break;
       case "f": case "F": if (s) toggleFavorite(s); break;
+      case "c": case "C": if (s && !e.ctrlKey) copyCredit(s); break;
       case "/": e.preventDefault(); els.search.focus(); break;
     }
   });
 
   // ---------------------------------------------------------------- input: controls
 
-  // Local folders filter as you type; Looperman searches once you pause (or press Enter).
+  // Local folders filter as you type; online sources search once you pause (or press Enter).
   let searchTimer = 0;
   function runSearch() {
     state.query = els.search.value.trim();
-    if (state.source !== "looperman") applyFilters();
-    else if (state.query !== state.lm.searched) searchLooperman(state.query, 1);
+    refreshOnline();
   }
   els.search.addEventListener("input", () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(runSearch, state.source === "looperman" ? 700 : 120);
+    searchTimer = setTimeout(runSearch, online() ? 700 : 120);
   });
+
+  // Freesound filters by BPM and key itself, so a filter change there is a new search.
+  let filterTimer = 0;
+  function filtersChanged() {
+    if (state.source !== "freesound") return applyFilters();
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(refreshOnline, 400);
+  }
+
+  function freesoundFilters() {
+    const filters = {};
+    if (state.bpmMode === "host" && state.hostBpm) {
+      const h = Math.round(state.hostBpm);
+      filters.bpm = [h, h * 2, h / 2].map((t) => [t - HOST_BPM_TOLERANCE, t + HOST_BPM_TOLERANCE]);
+    } else if (state.bpmMode === "range") {
+      const lo = parseFloat(els.bpmMin.value);
+      const hi = parseFloat(els.bpmMax.value);
+      if (!isNaN(lo) || !isNaN(hi)) filters.bpm = [[isNaN(lo) ? null : lo, isNaN(hi) ? null : hi]];
+    }
+    if (state.key) filters.key = state.key;
+    return filters;
+  }
   els.search.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     clearTimeout(searchTimer);
@@ -721,16 +879,16 @@
   els.bpmMode.addEventListener("change", () => {
     state.bpmMode = els.bpmMode.value;
     els.bpmRange.hidden = state.bpmMode !== "range";
-    applyFilters();
+    filtersChanged();
   });
-  els.bpmMin.addEventListener("input", () => applyFilters());
-  els.bpmMax.addEventListener("input", () => applyFilters());
+  els.bpmMin.addEventListener("input", filtersChanged);
+  els.bpmMax.addEventListener("input", filtersChanged);
 
   els.key.innerHTML = `<option value="">Any</option>`
     + SHARPS.map((n) => `<option value="${n}">${n} major</option><option value="${n}m">${n} minor</option>`).join("");
   els.key.addEventListener("change", () => {
     state.key = els.key.value;
-    applyFilters();
+    filtersChanged();
   });
 
   els.sort.addEventListener("change", () => {
@@ -750,23 +908,49 @@
     applyFilters();
   });
 
-  els.lmButton.addEventListener("click", () => {
-    for (const v of els.views.querySelectorAll(".view")) v.classList.remove("active");
-    state.source = "looperman";
-    state.query = els.search.value.trim();
-    renderLooperman();
-    if (state.lm.enabled && state.lm.searched !== state.query) searchLooperman(state.query, 1);
-    else applyFilters();
-  });
+  for (const btn of [els.lmButton, els.fsButton]) {
+    btn.addEventListener("click", () => {
+      for (const v of els.views.querySelectorAll(".view")) v.classList.remove("active");
+      state.source = btn.dataset.source;
+      state.query = els.search.value.trim();
+      renderLooperman();
+      refreshOnline();
+    });
+  }
 
   els.lmSignIn.addEventListener("click", () => window.fl.call("lmSignIn"));
   els.lmSignOut.addEventListener("click", () => window.fl.call("lmSignOut"));
   els.lmOff.addEventListener("click", () => window.fl.call("lmSetEnabled", false).then(applyLoopermanState));
+  els.fsSignIn.addEventListener("click", () => window.fl.call("fsSignIn").then(applyFreesoundState));
+  els.fsSignOut.addEventListener("click", () => window.fl.call("fsSignOut").then(applyFreesoundState));
+  els.fsKey.addEventListener("click", () => editFreesoundKey(true));
+
+  function editFreesoundKey(on) {
+    state.fs.editing = on;
+    renderLooperman();
+    if (on) applyFilters();
+    else refreshOnline();
+  }
 
   document.getElementById("add-folder").addEventListener("click", addFolder);
   els.empty.addEventListener("click", (e) => {
     if (e.target.closest("[data-action=add-folder]")) addFolder();
     if (e.target.closest("[data-action=lm-enable]")) window.fl.call("lmSetEnabled", true).then(applyLoopermanState);
+    if (e.target.closest("[data-action=fs-apply]")) window.fl.call("fsOpenApply");
+    if (e.target.closest("[data-action=fs-edit]")) editFreesoundKey(true);
+    if (e.target.closest("[data-action=fs-cancel]")) editFreesoundKey(false);
+  });
+  els.empty.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const clientId = $("fs-client-id").value.trim();
+    const apiKey = $("fs-api-key").value.trim();
+    if (!clientId || !apiKey) return toast("Paste both the Client ID and the API key.");
+    state.fs.editing = false;
+    state.fs.sig = null; // search again with the new key
+    window.fl.call("fsSetCredentials", clientId, apiKey).then((st) => {
+      applyFreesoundState(st);
+      refreshOnline();
+    });
   });
   els.rescan.addEventListener("click", () => window.fl.call("rescan"));
   els.folders.addEventListener("click", (e) => {
@@ -793,7 +977,10 @@
     state.hostPlaying = !!st.hostPlaying;
     if (tempoChanged) {
       renderTempo();
-      if (state.bpmMode === "host") applyFilters({ keepScroll: true });
+      if (state.bpmMode === "host") {
+        if (state.source === "freesound") filtersChanged();
+        else applyFilters({ keepScroll: true });
+      }
     }
 
     // The native side needs a moment to load a clip; don't flip back to "stopped" while it does.
@@ -814,9 +1001,11 @@
   });
 
   window.fl.on("lmState", applyLoopermanState);
+  window.fl.on("fsState", applyFreesoundState);
 
   window.fl.call("getState").then(loadLibrary);
   window.fl.call("lmState").then(applyLoopermanState);
+  window.fl.call("fsState").then(applyFreesoundState);
   renderTempo();
   renderLooperman();
 })();

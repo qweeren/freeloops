@@ -1,0 +1,62 @@
+{
+  "count": 3482,
+  "previous": null,
+  "next": "https://freesound.org/apiv2/search/?query=piano+loop&page=2&page_size=30",
+  "results": [
+    {
+      "id": 415987,
+      "name": "Piano Loop 120bpm.wav",
+      "username": "example_user",
+      "license": "http://creativecommons.org/licenses/by/4.0/",
+      "duration": 8.0,
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/415/415987_1234567-hq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/415/415987_1234567-hq.ogg",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/415/415987_1234567-lq.mp3",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/415/415987_1234567-lq.ogg"
+      },
+      "bpm": 119.8,
+      "tonality": "A minor",
+      "type": "wav",
+      "url": "https://freesound.org/people/example_user/sounds/415987/"
+    },
+    {
+      "id": 20001,
+      "name": "kick & snare",
+      "username": "another_user",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "duration": 0.42,
+      "previews": {
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/20/20001_42-hq.ogg"
+      },
+      "bpm": null,
+      "tonality": null,
+      "type": "aiff",
+      "url": "https://freesound.org/people/another_user/sounds/20001/"
+    },
+    {
+      "id": 77,
+      "name": "Bb pad",
+      "username": "third",
+      "license": "https://creativecommons.org/licenses/by-nc/3.0/",
+      "duration": 12.5,
+      "previews": {
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/0/77_3-hq.ogg"
+      },
+      "bpm": 0,
+      "tonality": "Bb major",
+      "type": "flac",
+      "url": "https://freesound.org/people/third/sounds/77/"
+    },
+    {
+      "id": 78,
+      "name": "no preview, so skipped",
+      "username": "third",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "duration": 1.0,
+      "previews": {},
+      "type": "wav",
+      "url": "https://freesound.org/people/third/sounds/78/"
+    }
+  ]
+}

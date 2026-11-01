@@ -6,6 +6,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include "FreesoundSignIn.h"
 #include "LoopermanView.h"
 #include "PluginProcessor.h"
 
@@ -38,11 +39,17 @@ private:
     void loopermanPreview (const juce::String& id, NativeFunctionCompletion);
     void loopermanDownload (const juce::String& id, NativeFunctionCompletion);
 
+    // Freesound: search and previews need an API key, downloads the user's own account (OAuth2).
+    juce::var freesoundState() const;
+    void freesoundPreview (const juce::String& id, NativeFunctionCompletion);
+    void freesoundSignIn();
+
     FreeloopsProcessor& owner;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::WebBrowserComponent browser; // after owner: its options capture this editor
     std::unique_ptr<LoopermanView> looperman;
-    int loopermanPreviewRequest = 0;
+    std::unique_ptr<FreesoundSignIn> freesoundSignInWindow;
+    int onlinePreviewRequest = 0; // a Looperman or Freesound audition still loading plays only if it's the latest
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreeloopsEditor)
 };

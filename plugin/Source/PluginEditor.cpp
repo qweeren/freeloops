@@ -60,6 +60,12 @@ namespace
     {
         return id.toString().fromFirstOccurrenceOf ("lm:", false, false);
     }
+
+    // "fs:415987" -> "415987"
+    juce::String freesoundId (const juce::var& id)
+    {
+        return id.toString().fromFirstOccurrenceOf ("fs:", false, false);
+    }
 }
 
 //==============================================================================
@@ -78,11 +84,15 @@ FreeloopsEditor::FreeloopsEditor (FreeloopsProcessor& p)
 
     if (owner.library.getSettings().getBoolValue ("looperman.enabled"))
         setLoopermanEnabled (true);
+
+    owner.freesound.onAccountChange = [this] { browser.emitEventIfBrowserIsVisible ("fsState", freesoundState()); };
 }
 
 FreeloopsEditor::~FreeloopsEditor()
 {
     looperman.reset(); // fails any queued downloads while the page can still receive the result
+    freesoundSignInWindow.reset();
+    owner.freesound.onAccountChange = nullptr;
     owner.library.removeChangeListener (this);
 }
 
@@ -143,14 +153,14 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
         {
             const auto path = args[0].toString();
             const auto ok = owner.library.contains (path);
-            ++loopermanPreviewRequest;
+            ++onlinePreviewRequest;
             if (ok)
                 owner.startPreview (path, path);
             done (ok);
         })
         .withNativeFunction ("stopPreview", [this] (Args, NativeFunctionCompletion done)
         {
-            ++loopermanPreviewRequest;
+            ++onlinePreviewRequest;
             owner.stopPreview();
             done (true);
         })
@@ -163,6 +173,14 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
                 auto file = owner.looperman.findDownload (loopermanId (path));
                 if (! file.existsAsFile())
                     file = owner.looperman.findCached (loopermanId (path));
+                path = file.getFullPathName();
+            }
+            else if (path.startsWith ("fs:"))
+            {
+                // A Freesound sound has peaks once its preview (or the original) is on disk.
+                auto file = owner.freesound.findPreview (freesoundId (path));
+                if (! file.existsAsFile())
+                    file = owner.freesound.findDownload (freesoundId (path));
                 path = file.getFullPathName();
             }
             else if (! owner.library.contains (path))
@@ -245,6 +263,77 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
             if (const auto* loop = owner.looperman.find (loopermanId (args[0])))
                 juce::URL (loop->detailUrl).launchInDefaultBrowser();
             done (true);
+        })
+
+        // ---- Freesound ----
+        .withNativeFunction ("fsState", [this] (Args, NativeFunctionCompletion done)
+        {
+            done (freesoundState());
+        })
+        .withNativeFunction ("fsSetCredentials", [this] (Args args, NativeFunctionCompletion done)
+        {
+            owner.freesound.setCredentials (args[0].toString(), args[1].toString());
+            done (freesoundState());
+        })
+        .withNativeFunction ("fsSearch", [this] (Args args, NativeFunctionCompletion done)
+        {
+            juce::Component::SafePointer<FreeloopsEditor> safe (this);
+            owner.freesound.search (args[0].toString(), (int) args[1], args[2], [safe, done] (juce::var result)
+            {
+                if (safe != nullptr)
+                    done (result);
+            });
+        })
+        .withNativeFunction ("fsPreview", [this] (Args args, NativeFunctionCompletion done)
+        {
+            freesoundPreview (args[0].toString(), std::move (done));
+        })
+        .withNativeFunction ("fsDownload", [this] (Args args, NativeFunctionCompletion done)
+        {
+            juce::Component::SafePointer<FreeloopsEditor> safe (this);
+            owner.freesound.download (freesoundId (args[0]), [safe, done] (juce::File file, juce::String error)
+            {
+                if (safe == nullptr)
+                    return;
+
+                if (! file.existsAsFile())
+                {
+                    done (errorResult (error));
+                    return;
+                }
+
+                auto* o = new juce::DynamicObject();
+                o->setProperty ("path", file.getFullPathName());
+                done (juce::var (o));
+            });
+        })
+        .withNativeFunction ("fsSignIn", [this] (Args, NativeFunctionCompletion done)
+        {
+            freesoundSignIn();
+            done (freesoundState());
+        })
+        .withNativeFunction ("fsSignOut", [this] (Args, NativeFunctionCompletion done)
+        {
+            owner.freesound.signOut();
+            done (freesoundState());
+        })
+        .withNativeFunction ("fsOpen", [this] (Args args, NativeFunctionCompletion done)
+        {
+            if (const auto* sound = owner.freesound.find (freesoundId (args[0])))
+                juce::URL (sound->pageUrl).launchInDefaultBrowser();
+            done (true);
+        })
+        .withNativeFunction ("fsOpenApply", [] (Args, NativeFunctionCompletion done)
+        {
+            juce::URL ("https://freesound.org/apiv2/apply").launchInDefaultBrowser();
+            done (true);
+        })
+        .withNativeFunction ("fsCopyCredit", [this] (Args args, NativeFunctionCompletion done)
+        {
+            const auto* sound = owner.freesound.find (freesoundId (args[0]));
+            if (sound != nullptr)
+                juce::SystemClipboard::copyTextToClipboard (sound->attribution());
+            done (sound != nullptr);
         });
 }
 
@@ -289,7 +378,7 @@ void FreeloopsEditor::loopermanPreview (const juce::String& id, NativeFunctionCo
 
     // Looperman refuses direct requests for its MP3 previews, so a loop is auditioned from a download
     // made with the user's own session (kept in the audition cache unless they drag it).
-    const auto request = ++loopermanPreviewRequest;
+    const auto request = ++onlinePreviewRequest;
     juce::Component::SafePointer<FreeloopsEditor> safe (this);
     looperman->download (loopermanId (id), false, [safe, id, request, done] (juce::File file, juce::String error)
     {
@@ -302,7 +391,7 @@ void FreeloopsEditor::loopermanPreview (const juce::String& id, NativeFunctionCo
             return;
         }
 
-        if (request == safe->loopermanPreviewRequest) // the user hasn't moved on to another sample
+        if (request == safe->onlinePreviewRequest) // the user hasn't moved on to another sample
             safe->owner.startPreview (file.getFullPathName(), id);
 
         auto* o = new juce::DynamicObject();
@@ -338,6 +427,93 @@ void FreeloopsEditor::loopermanDownload (const juce::String& id, NativeFunctionC
 }
 
 //==============================================================================
+juce::var FreeloopsEditor::freesoundState() const
+{
+    const auto& fs = owner.freesound;
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("configured", fs.hasApiKey());
+    o->setProperty ("canSignIn", fs.hasApiKey() && fs.hasClientId());
+    o->setProperty ("builtIn", fs.usesBuiltInCredentials());
+    o->setProperty ("clientId", fs.usesBuiltInCredentials() ? juce::String() : fs.getClientId());
+    o->setProperty ("signedIn", fs.isSignedIn());
+    o->setProperty ("signingIn", freesoundSignInWindow != nullptr);
+    o->setProperty ("username", fs.getUsername());
+    o->setProperty ("folder", FreesoundClient::downloadsFolder().getFullPathName());
+    return juce::var (o);
+}
+
+void FreeloopsEditor::freesoundPreview (const juce::String& id, NativeFunctionCompletion done)
+{
+    // Freesound's previews are public: fetch the HQ Ogg into the cache and play it through the plugin.
+    const auto request = ++onlinePreviewRequest;
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    owner.freesound.fetchPreview (freesoundId (id), [safe, id, request, done] (juce::File file, juce::String error)
+    {
+        if (safe == nullptr)
+            return;
+
+        if (! file.existsAsFile())
+        {
+            done (errorResult (error));
+            return;
+        }
+
+        if (request == safe->onlinePreviewRequest)
+            safe->owner.startPreview (file.getFullPathName(), id);
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("ok", true);
+        done (juce::var (o));
+    });
+}
+
+void FreeloopsEditor::freesoundSignIn()
+{
+    if (freesoundSignInWindow != nullptr)
+    {
+        freesoundSignInWindow->toFront (true);
+        return;
+    }
+
+    if (! owner.freesound.hasClientId())
+        return;
+
+    // A random state ties Freesound's redirect to this sign-in.
+    const auto state = juce::String::toHexString (juce::Random::getSystemRandom().nextInt64());
+    juce::Component::SafePointer<FreeloopsEditor> safe (this);
+    freesoundSignInWindow = std::make_unique<FreesoundSignIn> (owner.freesound.authorizeUrl (state), state, *this, [safe] (juce::String code)
+    {
+        // Close the popup from outside its own callback.
+        juce::MessageManager::callAsync ([safe, code]
+        {
+            if (safe == nullptr)
+                return;
+
+            safe->freesoundSignInWindow.reset();
+            if (code.isEmpty())
+            {
+                safe->browser.emitEventIfBrowserIsVisible ("fsState", safe->freesoundState());
+                return;
+            }
+
+            // The page keeps showing "signing in" until the code has been exchanged for tokens.
+            safe->owner.freesound.signIn (code, [safe] (juce::String error)
+            {
+                if (safe == nullptr)
+                    return;
+
+                auto st = safe->freesoundState();
+                if (error.isNotEmpty())
+                    st.getDynamicObject()->setProperty ("error", error);
+                safe->browser.emitEventIfBrowserIsVisible ("fsState", st);
+            });
+        });
+    });
+
+    browser.emitEventIfBrowserIsVisible ("fsState", freesoundState());
+}
+
+//==============================================================================
 void FreeloopsEditor::addFolder (NativeFunctionCompletion done)
 {
     chooser = std::make_unique<juce::FileChooser> ("Add a sample folder", juce::File(), juce::String(), true, false, this);
@@ -353,9 +529,10 @@ void FreeloopsEditor::addFolder (NativeFunctionCompletion done)
 
 void FreeloopsEditor::startDrag (const juce::String& path, NativeFunctionCompletion done)
 {
-    // Only files freeloops knows about: library samples and loops it downloaded from Looperman.
+    // Only files freeloops knows about: library samples and what it downloaded from Looperman or Freesound.
     const juce::File file (path);
-    const auto known = owner.library.contains (path) || file.isAChildOf (LoopermanClient::downloadsFolder());
+    const auto known = owner.library.contains (path) || file.isAChildOf (LoopermanClient::downloadsFolder())
+                       || file.isAChildOf (FreesoundClient::downloadsFolder());
     if (! known || ! file.existsAsFile())
     {
         done (false);

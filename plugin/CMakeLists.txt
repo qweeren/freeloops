@@ -46,6 +46,8 @@ juce_add_binary_data(FreeloopsUI SOURCES
     ../ui/app.js)
 
 target_sources(Freeloops PRIVATE
+    Source/Freesound.cpp
+    Source/FreesoundSignIn.cpp
     Source/Library.cpp
     Source/Looperman.cpp
     Source/LoopermanView.cpp
@@ -61,12 +63,30 @@ target_compile_definitions(Freeloops PUBLIC
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
+# Optional Freesound credentials compiled in, for personal builds. Each key is limited to 2,000 requests a
+# day, so builds for other people should leave these empty: users then paste their own key into the UI.
+set(FREELOOPS_FREESOUND_CLIENT_ID "" CACHE STRING "Freesound API client id built into the plugin (optional)")
+set(FREELOOPS_FREESOUND_API_KEY "" CACHE STRING "Freesound API key built into the plugin (optional)")
+if(FREELOOPS_FREESOUND_CLIENT_ID AND FREELOOPS_FREESOUND_API_KEY)
+    target_compile_definitions(Freeloops PRIVATE
+        FREELOOPS_FREESOUND_CLIENT_ID=${FREELOOPS_FREESOUND_CLIENT_ID}
+        FREELOOPS_FREESOUND_API_KEY=${FREELOOPS_FREESOUND_API_KEY})
+endif()
+
 # Parser check against a saved Looperman page (see tests/LoopermanParseTest.cpp).
 juce_add_console_app(LoopermanParseTest PRODUCT_NAME "LoopermanParseTest")
 target_sources(LoopermanParseTest PRIVATE tests/LoopermanParseTest.cpp Source/Looperman.cpp)
 target_compile_features(LoopermanParseTest PRIVATE cxx_std_17)
 target_compile_definitions(LoopermanParseTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_link_libraries(LoopermanParseTest PRIVATE juce::juce_core juce::juce_events
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+# Parser check for Freesound's API replies (tests/freesound-search.json is a hand-written sample reply).
+juce_add_console_app(FreesoundParseTest PRODUCT_NAME "FreesoundParseTest")
+target_sources(FreesoundParseTest PRIVATE tests/FreesoundParseTest.cpp Source/Freesound.cpp)
+target_compile_features(FreesoundParseTest PRIVATE cxx_std_17)
+target_compile_definitions(FreesoundParseTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_link_libraries(FreesoundParseTest PRIVATE juce::juce_core juce::juce_events juce::juce_data_structures
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 target_link_libraries(Freeloops
