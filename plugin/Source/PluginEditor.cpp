@@ -232,7 +232,7 @@ juce::WebBrowserComponent::Options FreeloopsEditor::makeBrowserOptions()
             }
 
             juce::Component::SafePointer<FreeloopsEditor> safe (this);
-            owner.looperman.search (args[0].toString(), (int) args[1], [safe, done] (juce::var result)
+            owner.looperman.search (args[0].toString(), (int) args[1], args[2], [safe, done] (juce::var result)
             {
                 if (safe != nullptr)
                     done (result);

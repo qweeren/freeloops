@@ -30,7 +30,9 @@ public:
     ~LoopermanClient();
 
     // Callback (message thread): { loops: [...], page, hasMore } or { error }.
-    void search (const juce::String& query, int page, std::function<void (juce::var)> callback);
+    // filters: { bpm: [[min, max], ...], key: "C#m" }, applied by Looperman. It takes one tempo range, so
+    // only the first is sent.
+    void search (const juce::String& query, int page, const juce::var& filters, std::function<void (juce::var)> callback);
 
     const LoopermanLoop* find (const juce::String& id) const;
 

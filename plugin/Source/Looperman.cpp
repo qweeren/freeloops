@@ -127,13 +127,26 @@ std::vector<LoopermanLoop> LoopermanClient::parseResults (const juce::String& ht
     return loops;
 }
 
-void LoopermanClient::search (const juce::String& query, int page, std::function<void (juce::var)> callback)
+void LoopermanClient::search (const juce::String& query, int page, const juce::var& filters,
+                              std::function<void (juce::var)> callback)
 {
     page = juce::jmax (1, page);
 
     juce::StringArray params;
     if (query.trim().isNotEmpty())
         params.add ("keys=" + juce::URL::addEscapeChars (query.trim(), true));
+
+    // Tempo range (either end may be open) and key, e.g. "C#m" -> mkey=csm. Looperman's keys are all sharps.
+    if (const auto* ranges = filters["bpm"].getArray(); ranges != nullptr && ! ranges->isEmpty())
+    {
+        const auto& range = ranges->getReference (0);
+        if (! range[0].isVoid())
+            params.add ("ftempo=" + juce::String ((int) std::floor ((double) range[0])));
+        if (! range[1].isVoid())
+            params.add ("ttempo=" + juce::String ((int) std::ceil ((double) range[1])));
+    }
+    if (const auto key = filters["key"].toString(); key.isNotEmpty())
+        params.add ("mkey=" + juce::URL::addEscapeChars (key.toLowerCase().replace ("#", "s"), true));
     if (page > 1)
         params.add ("page=" + juce::String (page));
 

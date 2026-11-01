@@ -45,22 +45,22 @@
     },
   };
 
-  // Online sources. Search text goes to the source; BPM, key and sort apply to what has loaded.
-  // Freesound also takes the BPM and key filters itself (most of its sounds have no tempo).
+  // Online sources. Search text and the BPM and key filters go to the source, so a filter change is a new
+  // search; the filters also apply to what has loaded (the source may match more loosely), and sort does too.
   const SOURCES = {
     looperman: {
       label: "Looperman", prefix: "lm", unit: "loop", list: "loops",
       st: () => state.lm,
       ready: () => state.lm.enabled,
-      search: (query, page) => window.fl.call("lmSearch", query, page),
-      signature: (query) => query,
+      search: (query, page) => window.fl.call("lmSearch", query, page, onlineFilters()),
+      signature: (query) => `${query} ${JSON.stringify(onlineFilters())}`,
     },
     freesound: {
       label: "Freesound", prefix: "fs", unit: "sound", list: "sounds",
       st: () => state.fs,
       ready: () => state.fs.configured && !state.fs.editing,
-      search: (query, page) => window.fl.call("fsSearch", query, page, freesoundFilters()),
-      signature: (query) => `${query} ${JSON.stringify(freesoundFilters())}`,
+      search: (query, page) => window.fl.call("fsSearch", query, page, onlineFilters()),
+      signature: (query) => `${query} ${JSON.stringify(onlineFilters())}`,
     },
   };
   const SOURCE_BY_PREFIX = { lm: "looperman", fs: "freesound" };
@@ -232,7 +232,7 @@
   function applyFilters({ keepScroll = false } = {}) {
     const src = online();
     if (src) {
-      // The search text already went to the source; BPM, key and sort still apply here.
+      // The search text and filters already went to the source; they still apply here, as does sort.
       state.results = src.ready() ? src.st().results.filter((s) => bpmMatches(s) && keyMatches(s)) : [];
     } else {
       const tokens = state.query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -680,7 +680,7 @@
     });
   }
 
-  // A new search on the current source if the words (or, for Freesound, the filters) changed.
+  // A new search on the current source if the words or the filters changed.
   function refreshOnline() {
     const src = online();
     if (src && src.ready() && src.signature(state.query) !== src.st().sig) searchOnline(state.source, state.query, 1);
@@ -849,15 +849,15 @@
     searchTimer = setTimeout(runSearch, online() ? 700 : 120);
   });
 
-  // Freesound filters by BPM and key itself, so a filter change there is a new search.
+  // Online sources filter by BPM and key themselves, so a filter change there is a new search.
   let filterTimer = 0;
   function filtersChanged() {
-    if (state.source !== "freesound") return applyFilters();
+    if (!online()) return applyFilters();
     clearTimeout(filterTimer);
     filterTimer = setTimeout(refreshOnline, 400);
   }
 
-  function freesoundFilters() {
+  function onlineFilters() {
     const filters = {};
     if (state.bpmMode === "host" && state.hostBpm) {
       const h = Math.round(state.hostBpm);
@@ -978,7 +978,7 @@
     if (tempoChanged) {
       renderTempo();
       if (state.bpmMode === "host") {
-        if (state.source === "freesound") filtersChanged();
+        if (online()) filtersChanged();
         else applyFilters({ keepScroll: true });
       }
     }

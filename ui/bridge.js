@@ -165,8 +165,9 @@
         if (!on) lm.signedIn = false;
         return api.lmState();
       },
-      lmSearch: (query, page) => new Promise((resolve) => setTimeout(() => {
-        const r = rand(page * 977 + query.length);
+      lmSearch: (query, page, filters) => new Promise((resolve) => setTimeout(() => {
+        const r = rand(page * 977 + query.length + JSON.stringify(filters || {}).length);
+        const range = filters && filters.bpm && filters.bpm[0];
         const pick = (arr) => arr[Math.floor(r() * arr.length)];
         const loops = [];
         for (let i = 0; i < 25; i++) {
@@ -175,7 +176,8 @@
           loops.push({
             id: `lm:${430000 + n}`, name: title, author: pick(["NOFVCEXX", "Danke", "SoulBeats", "Lowkey808", "ProdByRay"]),
             genre: pick(["Trap", "Hip Hop", "Lofi", "Drill", "House"]), category: pick(["Piano", "Synth", "Guitar", "Vocal"]),
-            key: pick(["D#m", "Am", "C", "F#m", "Bb", ""]), bpm: pick([90, 120, 130, 140, 145, 160]),
+            key: (filters && filters.key) || pick(["D#m", "Am", "C", "F#m", "A#", ""]),
+            bpm: range ? Math.round(range[0] ?? 100) + 1 : pick([90, 120, 130, 140, 145, 160]),
             duration: 8 + r() * 25, url: "", path: "",
           });
         }
