@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src file:">
+  <title>freeloops drag spike</title>
+  <style>
+    :root { color-scheme: dark; --bg: #15161a; --panel: #1e2026; --line: #2c2f37; --text: #e8e9ec; --dim: #8b8f99; --accent: #ff8c10; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; user-select: none; }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    p.hint { margin: 0 0 14px; color: var(--dim); }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; margin-bottom: 14px; }
+    .controls label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+    button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+    button:hover { border-color: var(--dim); }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: grab; }
+    li:hover { border-color: var(--accent); }
+    li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    li .size { color: var(--dim); font-variant-numeric: tabular-nums; }
+    #log { margin-top: 14px; height: 140px; overflow: auto; padding: 8px 10px; background: #0f1013; border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 Consolas, monospace; color: var(--dim); white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>freeloops · drag-out spike</h1>
+  <p class="hint">Drag a row into FL Studio's Playlist or Channel Rack. Click ▶ to preview.</p>
+
+  <div class="controls">
+    <label><input type="radio" name="mode" value="native" checked> Native gesture → main process</label>
+    <label><input type="radio" name="mode" value="html5"> HTML5 dragstart</label>
+    <label><input type="checkbox" id="ontop"> Always on top</label>
+    <button id="add">Add file…</button>
+  </div>
+
+  <ul id="list"></ul>
+  <div id="log"></div>
+  <audio id="player"></audio>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "freeloops-drag-spike",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Phase 0 spike: drag a cached .wav out of a desktop window into FL Studio",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^45.2.1"
+  }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>freeloops</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12c0-3 2-5 4.5-5S12 9 12 12s2 5 4.5 5S21 15 21 12s-2-5-4.5-5S12 9 12 12s-2 5-4.5 5S3 15 3 12z"/></svg>
+        freeloops
+      </div>
+
+      <nav class="views" id="views">
+        <button class="view active" data-view="all">All samples <span class="count" data-count="all">0</span></button>
+        <button class="view" data-view="loops">Loops <span class="count" data-count="loops">0</span></button>
+        <button class="view" data-view="oneshots">One-shots <span class="count" data-count="oneshots">0</span></button>
+        <button class="view" data-view="favorites">Favorites <span class="count" data-count="favorites">0</span></button>
+      </nav>
+
+      <div class="section-title">
+        Folders
+        <button id="rescan" class="icon-btn" title="Rescan folders">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg>
+        </button>
+      </div>
+      <ul class="folders" id="folders"></ul>
+      <button class="add-folder" id="add-folder">+ Add folder</button>
+
+      <div class="section-title">Online sources</div>
+      <ul class="sources">
+        <li class="source"><span class="dot"></span>Freesound<span class="soon">soon</span></li>
+        <li class="source"><span class="dot"></span>Looperman<span class="soon">soon</span></li>
+        <li class="source"><span class="dot"></span>Sample Focus<span class="soon">soon</span></li>
+      </ul>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="search" type="search" placeholder="Search samples, e.g. dark trap 140" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="tempo" id="tempo" title="FL Studio project tempo"><span class="tempo-dot"></span><span id="tempo-value">-</span> bpm</div>
+      </header>
+
+      <div class="filters">
+        <label class="filter">
+          <span>BPM</span>
+          <select id="bpm-mode">
+            <option value="any">Any</option>
+            <option value="host">Match project</option>
+            <option value="range">Range</option>
+          </select>
+        </label>
+        <span class="bpm-range" id="bpm-range" hidden>
+          <input id="bpm-min" type="number" min="40" max="250" placeholder="min">
+          <span>to</span>
+          <input id="bpm-max" type="number" min="40" max="250" placeholder="max">
+        </span>
+        <label class="filter">
+          <span>Key</span>
+          <select id="key"></select>
+        </label>
+        <label class="filter">
+          <span>Sort</span>
+          <select id="sort">
+            <option value="name">Name</option>
+            <option value="bpm">BPM</option>
+            <option value="key">Key</option>
+            <option value="folder">Folder</option>
+            <option value="random">Shuffle</option>
+          </select>
+        </label>
+        <span class="result-count" id="result-count"></span>
+      </div>
+
+      <div class="list-head">
+        <span></span><span></span><span>Name</span><span>Key</span><span>BPM</span><span>Time</span><span></span>
+      </div>
+
+      <div class="list" id="list" tabindex="0">
+        <div class="rows" id="rows"></div>
+        <div class="empty" id="empty" hidden></div>
+      </div>
+
+      <footer class="statusbar">
+        <span id="status">Loading...</span>
+        <span class="hint">Drag a row into FL Studio · right-click to show in Explorer · ↑ ↓ to audition</span>
+      </footer>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="bridge.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
