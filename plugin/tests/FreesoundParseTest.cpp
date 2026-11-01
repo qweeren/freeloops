@@ -63,13 +63,17 @@ int main (int argc, char* argv[])
             check (sounds[0].attribution().contains ("by example_user") && sounds[0].attribution().contains ("CC BY 4.0"), "attribution");
         }
 
-        // Search filters: BPM ranges (with half/double time) and a key in both spellings.
+        // Search filters: BPM ranges (with half/double time) grouped inside one field, and a key in sharps.
         auto* filters = new juce::DynamicObject();
         filters->setProperty ("bpm", juce::JSON::parse ("[[137, 143], [68.5, 71.5]]"));
         filters->setProperty ("key", "A#m");
         const auto query = FreesoundClient::filterQuery (juce::var (filters));
         std::cout << "filter: " << query << "\n";
-        check (query == "(bpm:[137 TO 143] OR bpm:[68 TO 72]) (tonality:\"A# minor\" OR tonality:\"Bb minor\")", "filter query");
+        check (query == "bpm:([137 TO 143] OR [68 TO 72]) tonality:\"A# minor\"", "filter query");
+
+        auto* flat = new juce::DynamicObject();
+        flat->setProperty ("key", "Dbm");
+        check (FreesoundClient::filterQuery (juce::var (flat)) == "tonality:\"C# minor\"", "flat key sent as sharp");
 
         auto* open = new juce::DynamicObject();
         open->setProperty ("bpm", juce::JSON::parse ("[[120, null]]"));

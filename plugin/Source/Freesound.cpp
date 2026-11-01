@@ -74,8 +74,8 @@ namespace
         return status > 0 ? "Freesound returned HTTP " + juce::String (status) : "Couldn't reach Freesound";
     }
 
-    // Both spellings of a key: Freesound's analysis may name it either way.
-    juce::StringArray tonalityNames (const juce::String& label)
+    // Freesound's name for a key, e.g. "Db" -> "C# major", "F#m" -> "F# minor". Its analysis only uses sharps.
+    juce::String tonalityName (const juce::String& label)
     {
         static const juce::StringArray sharps { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
         static const juce::StringArray flats  { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" };
@@ -88,10 +88,7 @@ namespace
         if (index < 0)
             return {};
 
-        const juce::String quality = minor ? " minor" : " major";
-        juce::StringArray names { sharps[index] + quality };
-        names.addIfNotAlreadyThere (flats[index] + quality);
-        return names;
+        return sharps[index] + (minor ? " minor" : " major");
     }
 }
 
@@ -280,18 +277,14 @@ juce::String FreesoundClient::filterQuery (const juce::var& filters)
         {
             const auto lo = range[0].isVoid() ? juce::String ("*") : juce::String ((int) std::floor ((double) range[0]));
             const auto hi = range[1].isVoid() ? juce::String ("*") : juce::String ((int) std::ceil ((double) range[1]));
-            bpm.add ("bpm:[" + lo + " TO " + hi + "]");
+            bpm.add ("[" + lo + " TO " + hi + "]");
         }
-        clauses.add (bpm.size() == 1 ? bpm[0] : "(" + bpm.joinIntoString (" OR ") + ")");
+        // Freesound ignores "(a:x OR a:y)" groups; alternatives have to sit inside one field: "a:(x OR y)".
+        clauses.add ("bpm:" + (bpm.size() == 1 ? bpm[0] : "(" + bpm.joinIntoString (" OR ") + ")"));
     }
 
-    if (const auto names = tonalityNames (filters["key"].toString()); ! names.isEmpty())
-    {
-        juce::StringArray keys;
-        for (const auto& n : names)
-            keys.add ("tonality:\"" + n + "\"");
-        clauses.add (keys.size() == 1 ? keys[0] : "(" + keys.joinIntoString (" OR ") + ")");
-    }
+    if (const auto name = tonalityName (filters["key"].toString()); name.isNotEmpty())
+        clauses.add ("tonality:\"" + name + "\"");
 
     return clauses.joinIntoString (" ");
 }
